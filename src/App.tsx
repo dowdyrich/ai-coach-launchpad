@@ -14,6 +14,7 @@ import Videos from "./pages/Videos";
 import Whiteboard from "./pages/Whiteboard";
 import CoachAI from "./pages/CoachAI";
 import Team from "./pages/Team";
+import Schedule from "./pages/Schedule";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -36,6 +37,7 @@ const App = () => (
               <Route path="/whiteboard" element={<Whiteboard />} />
               <Route path="/coach-ai" element={<CoachAI />} />
               <Route path="/team" element={<Team />} />
+              <Route path="/schedule" element={<Schedule />} />
             </Route>
             <Route path="*" element={<NotFound />} />
           </Routes>

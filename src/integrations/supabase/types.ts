@@ -14,6 +14,66 @@ export type Database = {
   }
   public: {
     Tables: {
+      games: {
+        Row: {
+          created_at: string
+          created_by: string
+          game_date: string
+          id: string
+          location: string | null
+          notes: string | null
+          opponent: string
+          opponent_score: number | null
+          result: string | null
+          team_id: string
+          team_score: number | null
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          created_by: string
+          game_date: string
+          id?: string
+          location?: string | null
+          notes?: string | null
+          opponent: string
+          opponent_score?: number | null
+          result?: string | null
+          team_id: string
+          team_score?: number | null
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          created_by?: string
+          game_date?: string
+          id?: string
+          location?: string | null
+          notes?: string | null
+          opponent?: string
+          opponent_score?: number | null
+          result?: string | null
+          team_id?: string
+          team_score?: number | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "games_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "games_team_id_fkey"
+            columns: ["team_id"]
+            isOneToOne: false
+            referencedRelation: "teams"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       play_templates: {
         Row: {
           actions_data: Json | null
