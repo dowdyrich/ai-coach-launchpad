@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import {
   BookOpen, PlayCircle, Video, Users, Plus, ArrowRight,
   PenTool, Upload, Target, UserCheck,
-  Calendar, MessageSquare, Send, MapPin, Clock
+  Calendar, MessageSquare, Send, MapPin, Clock, Trophy
 } from "lucide-react";
 import { format } from "date-fns";
 
@@ -34,6 +34,12 @@ interface Game {
   location: string | null;
 }
 
+interface SeasonRecord {
+  wins: number;
+  losses: number;
+  draws: number;
+}
+
 export default function Dashboard() {
   const { user, profile } = useAuth();
   const [stats, setStats] = useState({ teams: 0, playbooks: 0, plays: 0, videos: 0, members: 0 });
@@ -43,6 +49,7 @@ export default function Dashboard() {
   const [sendingMessage, setSendingMessage] = useState(false);
   const [teamId, setTeamId] = useState<string | null>(null);
   const [upcomingGames, setUpcomingGames] = useState<Game[]>([]);
+  const [seasonRecord, setSeasonRecord] = useState<SeasonRecord>({ wins: 0, losses: 0, draws: 0 });
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -71,7 +78,7 @@ export default function Dashboard() {
       setRecentPlaybooks((recentPb.data as unknown as PlaybookRow[]) || []);
 
       if (firstTeamId) {
-        const [msgs, games] = await Promise.all([
+        const [msgs, games, allGames] = await Promise.all([
           supabase
             .from("team_messages")
             .select("id, content, created_at, sender_id, team_id, profiles:sender_id(full_name, avatar_url)")
@@ -85,9 +92,21 @@ export default function Dashboard() {
             .gte("game_date", new Date().toISOString())
             .order("game_date", { ascending: true })
             .limit(3),
+          supabase
+            .from("games")
+            .select("result")
+            .eq("team_id", firstTeamId)
+            .not("result", "is", null),
         ]);
         setMessages((msgs.data as unknown as TeamMessage[]) || []);
         setUpcomingGames((games.data as Game[]) || []);
+
+        const results = (allGames.data || []) as { result: string }[];
+        setSeasonRecord({
+          wins: results.filter((g) => g.result === "win").length,
+          losses: results.filter((g) => g.result === "loss").length,
+          draws: results.filter((g) => g.result === "draw").length,
+        });
       }
     };
     fetchData();
@@ -144,6 +163,40 @@ export default function Dashboard() {
         <h1 className="text-2xl font-bold mb-1">Welcome back, {profile?.full_name || "Coach"} 👋</h1>
         <p className="text-muted-foreground text-sm">Here's your team overview.</p>
       </div>
+
+      {/* Season Record */}
+      {(seasonRecord.wins > 0 || seasonRecord.losses > 0 || seasonRecord.draws > 0) && (
+        <Card className="border-primary/20 bg-primary/5">
+          <CardContent className="p-5">
+            <div className="flex items-center gap-3 mb-3">
+              <Trophy className="w-5 h-5 text-primary" />
+              <span className="font-semibold">Season Record</span>
+            </div>
+            <div className="flex items-center gap-6">
+              <div className="text-center">
+                <p className="text-2xl font-bold text-accent-foreground">{seasonRecord.wins}</p>
+                <p className="text-xs text-muted-foreground">Wins</p>
+              </div>
+              <div className="text-center">
+                <p className="text-2xl font-bold text-destructive">{seasonRecord.losses}</p>
+                <p className="text-xs text-muted-foreground">Losses</p>
+              </div>
+              {seasonRecord.draws > 0 && (
+                <div className="text-center">
+                  <p className="text-2xl font-bold text-muted-foreground">{seasonRecord.draws}</p>
+                  <p className="text-xs text-muted-foreground">Draws</p>
+                </div>
+              )}
+              <div className="ml-auto text-right">
+                <p className="text-2xl font-bold text-primary">
+                  {((seasonRecord.wins / (seasonRecord.wins + seasonRecord.losses + seasonRecord.draws)) * 100).toFixed(0)}%
+                </p>
+                <p className="text-xs text-muted-foreground">Win Rate</p>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Stat Cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
