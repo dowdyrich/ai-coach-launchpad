@@ -745,6 +745,7 @@ export default function CreatePlay() {
                   isAnimating={isAnimating}
                   onAnimationEnd={() => setIsAnimating(false)}
                   courtMode={courtMode}
+                  currentStep={currentStep}
                   drawingPreview={drawingPreview}
                 />
               </CardContent>
