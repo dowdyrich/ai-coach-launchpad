@@ -9,6 +9,7 @@ interface PlayerFigureProps {
   team: "home" | "away";
   isSelected: boolean;
   onClick: () => void;
+  label?: string;
 }
 
 const HOME_PRIMARY = "#2563eb";
@@ -17,7 +18,7 @@ const AWAY_PRIMARY = "#ef4444";
 const AWAY_DARK = "#dc2626";
 
 export const PlayerFigure = forwardRef<THREE.Group, PlayerFigureProps>(
-  ({ position, number, team, isSelected, onClick }, ref) => {
+  ({ position, number, team, isSelected, onClick, label }, ref) => {
     const groupRef = useRef<THREE.Group>(null);
     const glowRef = useRef<THREE.Mesh>(null);
     const auraRef = useRef<THREE.Mesh>(null);
@@ -158,10 +159,10 @@ export const PlayerFigure = forwardRef<THREE.Group, PlayerFigureProps>(
           <meshStandardMaterial color={skinColor} roughness={0.55} />
         </mesh>
 
-        {/* Floating number above head - neon style */}
+        {/* Floating label above head - position name */}
         <Text
           position={[0, 1.98, 0]}
-          fontSize={0.24}
+          fontSize={0.22}
           color={primary}
           anchorX="center"
           anchorY="middle"
@@ -169,12 +170,12 @@ export const PlayerFigure = forwardRef<THREE.Group, PlayerFigureProps>(
           outlineColor="#fff"
           font={undefined}
         >
-          {String(number)}
+          {label || String(number)}
         </Text>
 
-        {/* Number glow backdrop */}
+        {/* Label glow backdrop */}
         <mesh position={[0, 1.98, -0.01]}>
-          <planeGeometry args={[0.4, 0.35]} />
+          <planeGeometry args={[0.5, 0.35]} />
           <meshBasicMaterial color={primary} transparent opacity={0.15} side={THREE.DoubleSide} />
         </mesh>
       </group>

@@ -13,6 +13,7 @@ interface CourtPlayer {
   y: number;
   number: number;
   team: "home" | "away";
+  position?: string;
 }
 
 interface CourtAction {
@@ -528,6 +529,7 @@ function AnimatedScene({
             team={p.team}
             isSelected={p.id === selectedPlayer}
             onClick={() => onPlayerClick?.(p.id)}
+            label={p.position}
           />
         );
       })}
