@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { Link } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/lib/auth";
@@ -6,7 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import {
   BookOpen, PlayCircle, Video, Users, Plus, ArrowRight,
-  PenTool, Upload, Target, AlertTriangle, UserCheck,
+  PenTool, Upload, Target, UserCheck,
   Calendar, MessageSquare, Send
 } from "lucide-react";
 
@@ -17,23 +17,41 @@ interface PlaybookRow {
   plays: { id: string }[];
 }
 
+interface TeamMessage {
+  id: string;
+  content: string;
+  created_at: string;
+  sender_id: string;
+  team_id: string;
+  profiles: { full_name: string | null; avatar_url: string | null } | null;
+}
+
 export default function Dashboard() {
   const { user, profile } = useAuth();
   const [stats, setStats] = useState({ teams: 0, playbooks: 0, plays: 0, videos: 0, members: 0 });
   const [recentPlaybooks, setRecentPlaybooks] = useState<PlaybookRow[]>([]);
+  const [messages, setMessages] = useState<TeamMessage[]>([]);
+  const [newMessage, setNewMessage] = useState("");
+  const [sendingMessage, setSendingMessage] = useState(false);
+  const [teamId, setTeamId] = useState<string | null>(null);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (!user) return;
 
     const fetchData = async () => {
       const [teams, playbooks, plays, videos, members, recentPb] = await Promise.all([
-        supabase.from("teams").select("id", { count: "exact", head: true }),
+        supabase.from("teams").select("id", { count: "exact" }),
         supabase.from("playbooks").select("id", { count: "exact", head: true }),
         supabase.from("plays").select("id", { count: "exact", head: true }),
         supabase.from("videos").select("id", { count: "exact", head: true }),
         supabase.from("team_memberships").select("id", { count: "exact", head: true }),
         supabase.from("playbooks").select("id, name, created_at, plays(id)").order("created_at", { ascending: false }).limit(4),
       ]);
+
+      const firstTeamId = teams.data?.[0]?.id || null;
+      setTeamId(firstTeamId);
+
       setStats({
         teams: teams.count || 0,
         playbooks: playbooks.count || 0,
@@ -42,15 +60,66 @@ export default function Dashboard() {
         members: members.count || 0,
       });
       setRecentPlaybooks((recentPb.data as unknown as PlaybookRow[]) || []);
+
+      if (firstTeamId) {
+        const { data: msgs } = await supabase
+          .from("team_messages")
+          .select("id, content, created_at, sender_id, team_id, profiles:sender_id(full_name, avatar_url)")
+          .eq("team_id", firstTeamId)
+          .order("created_at", { ascending: true })
+          .limit(20);
+        setMessages((msgs as unknown as TeamMessage[]) || []);
+      }
     };
     fetchData();
   }, [user]);
 
+  // Realtime subscription for messages
+  useEffect(() => {
+    if (!teamId) return;
+
+    const channel = supabase
+      .channel("team-messages-" + teamId)
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "team_messages", filter: `team_id=eq.${teamId}` },
+        async (payload) => {
+          const { data } = await supabase
+            .from("team_messages")
+            .select("id, content, created_at, sender_id, team_id, profiles:sender_id(full_name, avatar_url)")
+            .eq("id", payload.new.id)
+            .single();
+          if (data) {
+            setMessages((prev) => [...prev, data as unknown as TeamMessage]);
+          }
+        }
+      )
+      .subscribe();
+
+    return () => { supabase.removeChannel(channel); };
+  }, [teamId]);
+
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages]);
+
+  const handleSendMessage = async () => {
+    if (!newMessage.trim() || !teamId || !user) return;
+    setSendingMessage(true);
+    await supabase.from("team_messages").insert({
+      team_id: teamId,
+      sender_id: user.id,
+      content: newMessage.trim(),
+    });
+    setNewMessage("");
+    setSendingMessage(false);
+  };
+
   const statCards = [
-    { icon: Target, label: "Total Plays", value: stats.plays, change: null },
-    { icon: BookOpen, label: "Playbooks", value: stats.playbooks, change: null },
-    { icon: Video, label: "Videos", value: stats.videos, change: null },
-    { icon: UserCheck, label: "Active Players", value: stats.members, change: null },
+    { icon: Target, label: "Total Plays", value: stats.plays },
+    { icon: BookOpen, label: "Playbooks", value: stats.playbooks },
+    { icon: Video, label: "Videos", value: stats.videos },
+    { icon: UserCheck, label: "Active Players", value: stats.members },
   ];
 
   return (
@@ -182,7 +251,7 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {/* Bottom Row: Video Library + Quick Actions */}
+      {/* Bottom Row: Video Library + Team Messages */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Video Library */}
         <Card>
@@ -215,30 +284,66 @@ export default function Dashboard() {
           </CardContent>
         </Card>
 
-        {/* Quick Actions */}
-        <Card>
-          <CardHeader className="pb-3">
-            <CardTitle className="text-lg">Quick Actions</CardTitle>
+        {/* Team Messages */}
+        <Card className="flex flex-col">
+          <CardHeader className="flex-row items-center justify-between space-y-0 pb-3">
+            <CardTitle className="text-lg">Team Messages</CardTitle>
           </CardHeader>
-          <CardContent>
-            <div className="grid grid-cols-2 gap-3">
-              {[
-                { icon: Plus, label: "New Playbook", href: "/playbooks" },
-                { icon: PlayCircle, label: "Create Play", href: "/create" },
-                { icon: PenTool, label: "Whiteboard", href: "/whiteboard" },
-                { icon: Video, label: "Upload Video", href: "/videos" },
-              ].map((action) => (
-                <Link key={action.label} to={action.href}>
-                  <Button
-                    variant="outline"
-                    className="w-full justify-start gap-2 h-11"
-                  >
-                    <action.icon className="w-4 h-4" />
-                    {action.label}
-                  </Button>
+          <CardContent className="flex-1 flex flex-col">
+            {!teamId ? (
+              <div className="text-center py-6 text-muted-foreground flex-1 flex flex-col items-center justify-center">
+                <MessageSquare className="w-10 h-10 mx-auto mb-3 opacity-40" />
+                <p className="text-sm">Create a team to start messaging</p>
+                <Link to="/team">
+                  <Button variant="link" size="sm" className="mt-1">Create team →</Button>
                 </Link>
-              ))}
-            </div>
+              </div>
+            ) : (
+              <>
+                <div className="flex-1 max-h-52 overflow-y-auto space-y-3 mb-3">
+                  {messages.length === 0 ? (
+                    <div className="text-center py-6 text-muted-foreground">
+                      <MessageSquare className="w-10 h-10 mx-auto mb-3 opacity-40" />
+                      <p className="text-sm">No messages yet</p>
+                      <p className="text-xs mt-1">Send your first message</p>
+                    </div>
+                  ) : (
+                    messages.map((msg) => {
+                      const isOwn = msg.sender_id === user?.id;
+                      return (
+                        <div key={msg.id} className={`flex ${isOwn ? "justify-end" : "justify-start"}`}>
+                          <div className={`max-w-[80%] rounded-lg px-3 py-2 ${isOwn ? "bg-primary text-primary-foreground" : "bg-muted"}`}>
+                            {!isOwn && (
+                              <p className="text-xs font-medium mb-0.5 opacity-70">
+                                {msg.profiles?.full_name || "Unknown"}
+                              </p>
+                            )}
+                            <p className="text-sm">{msg.content}</p>
+                            <p className={`text-[10px] mt-1 ${isOwn ? "text-primary-foreground/60" : "text-muted-foreground"}`}>
+                              {new Date(msg.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                            </p>
+                          </div>
+                        </div>
+                      );
+                    })
+                  )}
+                  <div ref={messagesEndRef} />
+                </div>
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={newMessage}
+                    onChange={(e) => setNewMessage(e.target.value)}
+                    onKeyDown={(e) => e.key === "Enter" && !e.shiftKey && handleSendMessage()}
+                    placeholder="Type a message..."
+                    className="flex-1 rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  />
+                  <Button size="icon" onClick={handleSendMessage} disabled={sendingMessage || !newMessage.trim()}>
+                    <Send className="w-4 h-4" />
+                  </Button>
+                </div>
+              </>
+            )}
           </CardContent>
         </Card>
       </div>
