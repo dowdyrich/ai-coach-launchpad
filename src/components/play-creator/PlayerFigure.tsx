@@ -85,7 +85,6 @@ export const PlayerFigure = forwardRef<THREE.Group, PlayerFigureProps>(
           color="white"
           anchorX="center"
           anchorY="middle"
-          font="/fonts/inter-bold.woff"
         >
           {String(number)}
         </Text>
@@ -97,7 +96,6 @@ export const PlayerFigure = forwardRef<THREE.Group, PlayerFigureProps>(
           color="white"
           anchorX="center"
           anchorY="middle"
-          font="/fonts/inter-bold.woff"
         >
           {String(number)}
         </Text>
@@ -133,7 +131,6 @@ export const PlayerFigure = forwardRef<THREE.Group, PlayerFigureProps>(
           anchorY="middle"
           outlineWidth={0.02}
           outlineColor="white"
-          font="/fonts/inter-bold.woff"
         >
           {String(number)}
         </Text>
