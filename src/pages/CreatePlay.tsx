@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import {
-  MousePointer2, Circle, ArrowRight, Move,
+  MousePointer2, Circle, ArrowRight, Move, Undo2,
   Trash2, ChevronLeft, ChevronRight, Play, Pause, Save, ArrowLeftIcon, Loader2,
   Shield, Swords, UserPlus, X, Info
 } from "lucide-react";
@@ -243,6 +243,25 @@ export default function CreatePlay() {
     setIsAnimating((prev) => !prev);
   };
 
+  const undoLastAction = useCallback(() => {
+    if (actions.length === 0) return;
+    const removed = actions[actions.length - 1];
+    setActions(prev => prev.slice(0, -1));
+    toast.success(`Undid ${removed.type} action`);
+  }, [actions]);
+
+  // Keyboard shortcut: Ctrl/Cmd+Z to undo
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === "z" && !e.shiftKey) {
+        e.preventDefault();
+        undoLastAction();
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [undoLastAction]);
+
   const selectedPlayerData = players.find(p => p.id === selectedPlayer);
 
   // Contextual hint based on current tool
@@ -447,7 +466,23 @@ export default function CreatePlay() {
             {/* Contextual hint bar */}
             <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-muted/50 border border-border text-sm text-muted-foreground min-h-[36px]">
               <Info className="w-3.5 h-3.5 shrink-0" />
-              <span>{getToolHint()}</span>
+              <span className="flex-1">{getToolHint()}</span>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-7 px-2 text-xs gap-1.5 shrink-0"
+                    onClick={undoLastAction}
+                    disabled={actions.length === 0}
+                  >
+                    <Undo2 className="w-3.5 h-3.5" />
+                    Undo
+                    <kbd className="hidden sm:inline-flex ml-1 px-1 py-0.5 rounded bg-muted text-[10px] font-mono border border-border">⌘Z</kbd>
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>Undo last action (⌘Z / Ctrl+Z)</TooltipContent>
+              </Tooltip>
             </div>
 
             <Card className="overflow-hidden">
