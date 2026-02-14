@@ -24,6 +24,7 @@ interface CourtAction {
   toY: number;
   stepIndex: number;
   waypoints?: { x: number; y: number }[];
+  delay?: number;
 }
 
 interface Court3DProps {
@@ -36,6 +37,8 @@ interface Court3DProps {
   onAnimationEnd?: () => void;
   animationSpeed?: number;
   courtMode?: CourtMode;
+  /** Live preview waypoints for free-path drawing */
+  drawingPreview?: { playerX: number; playerY: number; waypoints: { x: number; y: number }[] } | null;
 }
 
 // ── NBA Official Dimensions (in meters) ─────────────────────────
@@ -299,23 +302,27 @@ function getAnimatedPlayerPositions(
       const act = actions.find(
         (a) =>
           a.stepIndex === step &&
-          (a.type === "move" || a.type === "dribble") &&
+          (a.type === "move" || a.type === "dribble" || a.type === "screen") &&
           Math.abs(a.fromX - cx) < TOLERANCE &&
           Math.abs(a.fromY - cy) < TOLERANCE
       );
 
       if (act) {
-        if (step < completedStep) {
+        // Calculate effective fraction considering delay
+        const delay = act.delay || 0;
+        const effectiveFrac = step < completedStep ? 1 : Math.max(0, (frac - delay) / (1 - delay));
+        
+        if (step < completedStep || effectiveFrac >= 1) {
           cx = act.toX;
           cy = act.toY;
-        } else {
+        } else if (effectiveFrac > 0) {
           const allPoints = [
             { x: act.fromX, y: act.fromY },
             ...(act.waypoints || []),
             { x: act.toX, y: act.toY },
           ];
           const segments = allPoints.length - 1;
-          const segProgress = frac * segments;
+          const segProgress = effectiveFrac * segments;
           const segIdx = Math.min(Math.floor(segProgress), segments - 1);
           const segFrac = segProgress - segIdx;
           cx = allPoints[segIdx].x + (allPoints[segIdx + 1].x - allPoints[segIdx].x) * segFrac;
@@ -342,6 +349,7 @@ function AnimatedScene({
   onAnimationEnd,
   speed,
   courtMode,
+  drawingPreview,
 }: {
   players: CourtPlayer[];
   actions: CourtAction[];
@@ -352,6 +360,7 @@ function AnimatedScene({
   onAnimationEnd?: () => void;
   speed: number;
   courtMode: CourtMode;
+  drawingPreview?: { playerX: number; playerY: number; waypoints: { x: number; y: number }[] } | null;
 }) {
   const totalSteps = actions.length > 0 ? Math.max(...actions.map((a) => a.stepIndex)) + 1 : 1;
   const progressRef = useRef(0);
@@ -493,6 +502,42 @@ function AnimatedScene({
           );
         })}
       </group>
+
+      {/* Live drawing preview */}
+      {drawingPreview && drawingPreview.waypoints.length > 0 && (
+        <group>
+          {(() => {
+            const allPts = [
+              { x: drawingPreview.playerX, y: drawingPreview.playerY },
+              ...drawingPreview.waypoints,
+            ];
+            // Render preview segments
+            return allPts.slice(0, -1).map((pt, i) => {
+              const next = allPts[i + 1];
+              const [fx, , fz] = toCourtPos(pt.x, pt.y, courtMode);
+              const [tx, , tz] = toCourtPos(next.x, next.y, courtMode);
+              return (
+                <ActionLine3D
+                  key={`preview-${i}`}
+                  from={[fx, 0.5, fz]}
+                  to={[tx, 0.5, tz]}
+                  type="move"
+                />
+              );
+            });
+          })()}
+          {/* Waypoint markers */}
+          {drawingPreview.waypoints.map((wp, i) => {
+            const [wx, , wz] = toCourtPos(wp.x, wp.y, courtMode);
+            return (
+              <mesh key={`wp-marker-${i}`} position={[wx, 0.5, wz]}>
+                <sphereGeometry args={[0.12, 12, 12]} />
+                <meshBasicMaterial color="hsl(50, 100%, 55%)" transparent opacity={0.8} />
+              </mesh>
+            );
+          })}
+        </group>
+      )}
     </>
   );
 }
@@ -508,6 +553,7 @@ export function Court3D({
   onAnimationEnd,
   animationSpeed = 0.5,
   courtMode = "full",
+  drawingPreview,
 }: Court3DProps) {
   const [contextLost, setContextLost] = useState(false);
   const [canvasKey, setCanvasKey] = useState(0);
@@ -551,6 +597,7 @@ export function Court3D({
           onAnimationEnd={onAnimationEnd}
           speed={animationSpeed}
           courtMode={courtMode}
+          drawingPreview={drawingPreview}
         />
       </Canvas>
     </div>

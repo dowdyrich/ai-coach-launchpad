@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useMemo } from "react";
 import { useSearchParams, Link } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/lib/auth";
@@ -9,14 +9,15 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/comp
 import {
   MousePointer2, Circle, ArrowRight, Move, Undo2, Pencil,
   Trash2, ChevronLeft, ChevronRight, Play, Pause, Save, ArrowLeftIcon, Loader2,
-  Shield, Swords, UserPlus, X, Info, Check
+  Shield, Swords, X, Info, Check, Target, Users
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Court3D, CourtMode } from "@/components/play-creator/Court3D";
 import { VoiceOverlay, VoiceOverlayEntry } from "@/components/play-creator/VoiceOverlay";
+import { ActionTimeline } from "@/components/play-creator/ActionTimeline";
 import { toast } from "sonner";
 
-type Tool = "select" | "player-offense" | "player-defense" | "move" | "pass" | "screen" | "dribble" | "draw-path";
+type Tool = "select" | "player-offense" | "player-defense" | "move" | "pass" | "screen" | "screen-player" | "dribble" | "draw-path";
 
 interface CourtPlayer {
   id: string;
@@ -35,6 +36,7 @@ interface CourtAction {
   toY: number;
   stepIndex: number;
   waypoints?: { x: number; y: number }[];
+  delay?: number;
 }
 
 export default function CreatePlay() {
@@ -57,6 +59,7 @@ export default function CreatePlay() {
   const [drawingWaypoints, setDrawingWaypoints] = useState<{ x: number; y: number }[]>([]);
   const [drawPathType, setDrawPathType] = useState<"move" | "dribble">("move");
   const [courtMode, setCourtMode] = useState<CourtMode>("half");
+
   // Load play data if playId provided
   useEffect(() => {
     if (!playId) return;
@@ -75,7 +78,6 @@ export default function CreatePlay() {
         setPlayName(data.name);
         setPlayMeta(data);
 
-        // Load players - convert from template format if needed
         const rawPlayers = (data.players_data as any[]) || [];
         const playersData: CourtPlayer[] = rawPlayers.map((p: any) => {
           const isTemplateFormat = p.x <= 100 && p.y <= 100 && (p.team === "offense" || p.team === "defense" || p.label);
@@ -92,7 +94,6 @@ export default function CreatePlay() {
         const awayCount = playersData.filter((p) => p.team === "away").length;
         setPlayerCount({ home: homeCount, away: awayCount });
 
-        // Load actions - convert from template format if needed
         const rawActions = (data.actions_data as any[]) || [];
         const hasCoordinateActions = rawActions.length > 0 && rawActions[0].fromX !== undefined;
         if (hasCoordinateActions) {
@@ -200,9 +201,23 @@ export default function CreatePlay() {
     } else if (tool === "select") {
       setSelectedPlayer(null);
     } else if (tool === "draw-path" && selectedPlayer) {
-      // Accumulate waypoints for free-path drawing
       setDrawingWaypoints(prev => [...prev, { x, y }]);
-    } else if ((tool === "pass" || tool === "move" || tool === "screen" || tool === "dribble") && selectedPlayer) {
+    } else if (tool === "screen" && selectedPlayer) {
+      // Screen to location: move to spot and set screen
+      const player = players.find(p => p.id === selectedPlayer);
+      if (player) {
+        setActions(prev => [...prev, {
+          id: crypto.randomUUID(),
+          type: "screen",
+          fromX: player.x,
+          fromY: player.y,
+          toX: x,
+          toY: y,
+          stepIndex: currentStep,
+        }]);
+        toast.success("Screen (move to location) added");
+      }
+    } else if ((tool === "pass" || tool === "move" || tool === "dribble") && selectedPlayer) {
       const player = players.find(p => p.id === selectedPlayer);
       if (player) {
         setActions(prev => [...prev, {
@@ -218,6 +233,34 @@ export default function CreatePlay() {
       }
     }
   }, [tool, playerCount, selectedPlayer, players, currentStep]);
+
+  // Screen-for-player: clicking another player to set screen near them
+  const handlePlayerClick = useCallback((id: string) => {
+    if (tool === "screen-player" && selectedPlayer && id !== selectedPlayer) {
+      const screener = players.find(p => p.id === selectedPlayer);
+      const target = players.find(p => p.id === id);
+      if (screener && target) {
+        // Position screen slightly offset from target
+        const offsetX = target.x + (screener.x > target.x ? -30 : 30);
+        setActions(prev => [...prev, {
+          id: crypto.randomUUID(),
+          type: "screen",
+          fromX: screener.x,
+          fromY: screener.y,
+          toX: offsetX,
+          toY: target.y,
+          stepIndex: currentStep,
+        }]);
+        toast.success(`Screen set for Player #${target.number}`);
+        setTool("select");
+      }
+      return;
+    }
+    setSelectedPlayer(id);
+    if (tool === "player-offense" || tool === "player-defense") {
+      setTool("select");
+    }
+  }, [tool, selectedPlayer, players, currentStep]);
 
   const finishDrawPath = useCallback(() => {
     if (!selectedPlayer || drawingWaypoints.length === 0) return;
@@ -243,14 +286,6 @@ export default function CreatePlay() {
     setDrawingWaypoints([]);
     setTool("select");
   }, []);
-
-  const handlePlayerClick = useCallback((id: string) => {
-    setSelectedPlayer(id);
-    // Auto-switch to select mode if in player-add mode
-    if (tool === "player-offense" || tool === "player-defense") {
-      setTool("select");
-    }
-  }, [tool]);
 
   const removeSelectedPlayer = useCallback(() => {
     if (!selectedPlayer) return;
@@ -281,7 +316,11 @@ export default function CreatePlay() {
     toast.success(`Undid ${removed.type} action`);
   }, [actions]);
 
-  // Keyboard shortcut: Ctrl/Cmd+Z to undo, Enter to finish draw path, Escape to cancel
+  const updateActionDelay = useCallback((actionId: string, delay: number) => {
+    setActions(prev => prev.map(a => a.id === actionId ? { ...a, delay } : a));
+  }, []);
+
+  // Keyboard shortcuts
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key === "z" && !e.shiftKey) {
@@ -303,7 +342,14 @@ export default function CreatePlay() {
 
   const selectedPlayerData = players.find(p => p.id === selectedPlayer);
 
-  // Contextual hint based on current tool
+  // Build drawing preview data for Court3D
+  const drawingPreview = useMemo(() => {
+    if (tool !== "draw-path" || !selectedPlayer || drawingWaypoints.length === 0) return null;
+    const player = players.find(p => p.id === selectedPlayer);
+    if (!player) return null;
+    return { playerX: player.x, playerY: player.y, waypoints: drawingWaypoints };
+  }, [tool, selectedPlayer, drawingWaypoints, players]);
+
   const getToolHint = (): string => {
     switch (tool) {
       case "select": return selectedPlayer ? "Player selected — choose an action tool or click elsewhere to deselect" : "Click a player to select it";
@@ -311,7 +357,8 @@ export default function CreatePlay() {
       case "player-defense": return `Click on the court to place a defense player (${playerCount.away}/5)`;
       case "move": return selectedPlayer ? "Click on the court to set the move destination" : "Select a player first, then click to set destination";
       case "pass": return selectedPlayer ? "Click on the court to set the pass target" : "Select a player first, then click the pass target";
-      case "screen": return selectedPlayer ? "Click on the court to set the screen position" : "Select a player first, then click the screen position";
+      case "screen": return selectedPlayer ? "Click on the court to move and set a screen at that location" : "Select a player first";
+      case "screen-player": return selectedPlayer ? "Click on a teammate to set a screen near them" : "Select a player first";
       case "dribble": return selectedPlayer ? "Click on the court to set the dribble path" : "Select a player first, then click to set path";
       case "draw-path": return drawingWaypoints.length === 0
         ? "Click points on the court to draw a free path — press Enter to finish"
@@ -356,7 +403,7 @@ export default function CreatePlay() {
           )}
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-[220px_1fr_220px] gap-4">
+        <div className="grid grid-cols-1 lg:grid-cols-[220px_1fr_240px] gap-4">
           {/* Left Sidebar — Tools */}
           <div className="space-y-3">
             {/* Players section */}
@@ -460,21 +507,6 @@ export default function CreatePlay() {
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <Button
-                      variant={tool === "screen" ? "default" : "ghost"}
-                      className={cn("w-full justify-start h-9 text-sm", tool === "screen" && "bg-destructive text-destructive-foreground")}
-                      onClick={() => setTool("screen")}
-                      disabled={!selectedPlayer}
-                    >
-                      <Circle className="w-3.5 h-3.5 mr-2" />
-                      Screen
-                    </Button>
-                  </TooltipTrigger>
-                  <TooltipContent side="right">Set a screen position for selected player</TooltipContent>
-                </Tooltip>
-
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <Button
                       variant={tool === "dribble" ? "default" : "ghost"}
                       className={cn("w-full justify-start h-9 text-sm", tool === "dribble" && "bg-accent text-accent-foreground")}
                       onClick={() => setTool("dribble")}
@@ -486,6 +518,42 @@ export default function CreatePlay() {
                   </TooltipTrigger>
                   <TooltipContent side="right">Draw a dribble path for selected player</TooltipContent>
                 </Tooltip>
+
+                {/* Separator */}
+                <div className="border-t border-border my-1" />
+
+                {/* Screen tools */}
+                <div className="space-y-1">
+                  <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground px-1">Screen</span>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        variant={tool === "screen" ? "default" : "ghost"}
+                        className={cn("w-full justify-start h-8 text-xs", tool === "screen" && "bg-destructive text-destructive-foreground")}
+                        onClick={() => setTool("screen")}
+                        disabled={!selectedPlayer}
+                      >
+                        <Target className="w-3 h-3 mr-2" />
+                        Screen Location
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent side="right">Move player to a court spot and set screen</TooltipContent>
+                  </Tooltip>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        variant={tool === "screen-player" ? "default" : "ghost"}
+                        className={cn("w-full justify-start h-8 text-xs", tool === "screen-player" && "bg-destructive text-destructive-foreground")}
+                        onClick={() => setTool("screen-player")}
+                        disabled={!selectedPlayer}
+                      >
+                        <Users className="w-3 h-3 mr-2" />
+                        Screen for Player
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent side="right">Click a teammate to screen for them</TooltipContent>
+                  </Tooltip>
+                </div>
 
                 {/* Separator */}
                 <div className="border-t border-border my-1" />
@@ -604,6 +672,7 @@ export default function CreatePlay() {
                   isAnimating={isAnimating}
                   onAnimationEnd={() => setIsAnimating(false)}
                   courtMode={courtMode}
+                  drawingPreview={drawingPreview}
                 />
               </CardContent>
             </Card>
@@ -742,7 +811,7 @@ export default function CreatePlay() {
               </CardContent>
             </Card>
 
-            {/* Actions on current step */}
+            {/* Actions on current step — with timeline */}
             <Card>
               <CardHeader className="pb-2 pt-3 px-3">
                 <CardTitle className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
@@ -750,25 +819,12 @@ export default function CreatePlay() {
                 </CardTitle>
               </CardHeader>
               <CardContent className="px-3 pb-3">
-                {actions.filter(a => a.stepIndex === currentStep).length === 0 ? (
-                  <p className="text-xs text-muted-foreground py-2">No actions on this step. Select a player and choose an action tool.</p>
-                ) : (
-                  <div className="space-y-1">
-                    {actions.filter(a => a.stepIndex === currentStep).map((a) => (
-                      <div key={a.id} className="flex items-center justify-between py-1 px-2 rounded bg-muted/50 text-xs">
-                        <span className="capitalize font-medium">{a.type}</span>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-5 w-5 text-muted-foreground hover:text-destructive"
-                          onClick={() => setActions(prev => prev.filter(act => act.id !== a.id))}
-                        >
-                          <X className="w-3 h-3" />
-                        </Button>
-                      </div>
-                    ))}
-                  </div>
-                )}
+                <ActionTimeline
+                  actions={actions}
+                  stepIndex={currentStep}
+                  onUpdateDelay={updateActionDelay}
+                  onRemoveAction={(id) => setActions(prev => prev.filter(a => a.id !== id))}
+                />
               </CardContent>
             </Card>
 
