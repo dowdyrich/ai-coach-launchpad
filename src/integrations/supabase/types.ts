@@ -118,6 +118,7 @@ export type Database = {
           players_data: Json | null
           type: string | null
           updated_at: string
+          voice_overlays: Json | null
         }
         Insert: {
           actions_data?: Json | null
@@ -132,6 +133,7 @@ export type Database = {
           players_data?: Json | null
           type?: string | null
           updated_at?: string
+          voice_overlays?: Json | null
         }
         Update: {
           actions_data?: Json | null
@@ -146,6 +148,7 @@ export type Database = {
           players_data?: Json | null
           type?: string | null
           updated_at?: string
+          voice_overlays?: Json | null
         }
         Relationships: [
           {
