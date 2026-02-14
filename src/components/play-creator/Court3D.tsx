@@ -21,6 +21,7 @@ interface CourtAction {
   toX: number;
   toY: number;
   stepIndex: number;
+  waypoints?: { x: number; y: number }[];
 }
 
 interface Court3DProps {
@@ -172,8 +173,18 @@ function getAnimatedPlayerPositions(
           cx = act.toX;
           cy = act.toY;
         } else {
-          cx = act.fromX + (act.toX - act.fromX) * frac;
-          cy = act.fromY + (act.toY - act.fromY) * frac;
+          // Interpolate along waypoints if present
+          const allPoints = [
+            { x: act.fromX, y: act.fromY },
+            ...(act.waypoints || []),
+            { x: act.toX, y: act.toY },
+          ];
+          const segments = allPoints.length - 1;
+          const segProgress = frac * segments;
+          const segIdx = Math.min(Math.floor(segProgress), segments - 1);
+          const segFrac = segProgress - segIdx;
+          cx = allPoints[segIdx].x + (allPoints[segIdx + 1].x - allPoints[segIdx].x) * segFrac;
+          cy = allPoints[segIdx].y + (allPoints[segIdx + 1].y - allPoints[segIdx].y) * segFrac;
         }
       }
     }
@@ -336,12 +347,17 @@ function AnimatedScene({
         {visibleActions.map((a, i) => {
           const [fx, , fz] = toCourtPos(a.fromX, a.fromY);
           const [tx, , tz] = toCourtPos(a.toX, a.toY);
+          const wp = a.waypoints?.map(w => {
+            const [wx, , wz] = toCourtPos(w.x, w.y);
+            return [wx, 0.5, wz] as [number, number, number];
+          });
           return (
             <ActionLine3D
               key={`${a.id}-${i}`}
               from={[fx, 0.5, fz]}
               to={[tx, 0.5, tz]}
               type={a.type}
+              waypoints={wp}
             />
           );
         })}

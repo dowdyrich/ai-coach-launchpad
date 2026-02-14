@@ -7,16 +7,16 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import {
-  MousePointer2, Circle, ArrowRight, Move, Undo2,
+  MousePointer2, Circle, ArrowRight, Move, Undo2, Pencil,
   Trash2, ChevronLeft, ChevronRight, Play, Pause, Save, ArrowLeftIcon, Loader2,
-  Shield, Swords, UserPlus, X, Info
+  Shield, Swords, UserPlus, X, Info, Check
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Court3D } from "@/components/play-creator/Court3D";
 import { VoiceOverlay, VoiceOverlayEntry } from "@/components/play-creator/VoiceOverlay";
 import { toast } from "sonner";
 
-type Tool = "select" | "player-offense" | "player-defense" | "move" | "pass" | "screen" | "dribble";
+type Tool = "select" | "player-offense" | "player-defense" | "move" | "pass" | "screen" | "dribble" | "draw-path";
 
 interface CourtPlayer {
   id: string;
@@ -34,6 +34,7 @@ interface CourtAction {
   toX: number;
   toY: number;
   stepIndex: number;
+  waypoints?: { x: number; y: number }[];
 }
 
 export default function CreatePlay() {
@@ -53,7 +54,8 @@ export default function CreatePlay() {
   const [playMeta, setPlayMeta] = useState<any>(null);
   const [loadingPlay, setLoadingPlay] = useState(!!playId);
   const [saving, setSaving] = useState(false);
-
+  const [drawingWaypoints, setDrawingWaypoints] = useState<{ x: number; y: number }[]>([]);
+  const [drawPathType, setDrawPathType] = useState<"move" | "dribble">("move");
   // Load play data if playId provided
   useEffect(() => {
     if (!playId) return;
@@ -196,6 +198,9 @@ export default function CreatePlay() {
       toast.success(`${team === "home" ? "Offense" : "Defense"} player #${count + 1} added`);
     } else if (tool === "select") {
       setSelectedPlayer(null);
+    } else if (tool === "draw-path" && selectedPlayer) {
+      // Accumulate waypoints for free-path drawing
+      setDrawingWaypoints(prev => [...prev, { x, y }]);
     } else if ((tool === "pass" || tool === "move" || tool === "screen" || tool === "dribble") && selectedPlayer) {
       const player = players.find(p => p.id === selectedPlayer);
       if (player) {
@@ -212,6 +217,31 @@ export default function CreatePlay() {
       }
     }
   }, [tool, playerCount, selectedPlayer, players, currentStep]);
+
+  const finishDrawPath = useCallback(() => {
+    if (!selectedPlayer || drawingWaypoints.length === 0) return;
+    const player = players.find(p => p.id === selectedPlayer);
+    if (!player) return;
+    const lastPoint = drawingWaypoints[drawingWaypoints.length - 1];
+    const middleWaypoints = drawingWaypoints.length > 1 ? drawingWaypoints.slice(0, -1) : undefined;
+    setActions(prev => [...prev, {
+      id: crypto.randomUUID(),
+      type: drawPathType,
+      fromX: player.x,
+      fromY: player.y,
+      toX: lastPoint.x,
+      toY: lastPoint.y,
+      stepIndex: currentStep,
+      waypoints: middleWaypoints,
+    }]);
+    setDrawingWaypoints([]);
+    toast.success(`Free path (${drawPathType}) added with ${drawingWaypoints.length} points`);
+  }, [selectedPlayer, drawingWaypoints, drawPathType, players, currentStep]);
+
+  const cancelDrawPath = useCallback(() => {
+    setDrawingWaypoints([]);
+    setTool("select");
+  }, []);
 
   const handlePlayerClick = useCallback((id: string) => {
     setSelectedPlayer(id);
@@ -250,17 +280,25 @@ export default function CreatePlay() {
     toast.success(`Undid ${removed.type} action`);
   }, [actions]);
 
-  // Keyboard shortcut: Ctrl/Cmd+Z to undo
+  // Keyboard shortcut: Ctrl/Cmd+Z to undo, Enter to finish draw path, Escape to cancel
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key === "z" && !e.shiftKey) {
         e.preventDefault();
         undoLastAction();
       }
+      if (e.key === "Enter" && tool === "draw-path" && drawingWaypoints.length > 0) {
+        e.preventDefault();
+        finishDrawPath();
+      }
+      if (e.key === "Escape" && tool === "draw-path") {
+        e.preventDefault();
+        cancelDrawPath();
+      }
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [undoLastAction]);
+  }, [undoLastAction, tool, drawingWaypoints, finishDrawPath, cancelDrawPath]);
 
   const selectedPlayerData = players.find(p => p.id === selectedPlayer);
 
@@ -274,6 +312,9 @@ export default function CreatePlay() {
       case "pass": return selectedPlayer ? "Click on the court to set the pass target" : "Select a player first, then click the pass target";
       case "screen": return selectedPlayer ? "Click on the court to set the screen position" : "Select a player first, then click the screen position";
       case "dribble": return selectedPlayer ? "Click on the court to set the dribble path" : "Select a player first, then click to set path";
+      case "draw-path": return drawingWaypoints.length === 0
+        ? "Click points on the court to draw a free path — press Enter to finish"
+        : `Drawing path: ${drawingWaypoints.length} point${drawingWaypoints.length > 1 ? "s" : ""} — click more or press Enter to finish (Esc to cancel)`;
       default: return "";
     }
   };
@@ -444,6 +485,72 @@ export default function CreatePlay() {
                   </TooltipTrigger>
                   <TooltipContent side="right">Draw a dribble path for selected player</TooltipContent>
                 </Tooltip>
+
+                {/* Separator */}
+                <div className="border-t border-border my-1" />
+
+                {/* Free Path Draw */}
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      variant={tool === "draw-path" ? "default" : "ghost"}
+                      className={cn("w-full justify-start h-9 text-sm", tool === "draw-path" && "bg-primary text-primary-foreground")}
+                      onClick={() => { setTool("draw-path"); setDrawingWaypoints([]); }}
+                      disabled={!selectedPlayer}
+                    >
+                      <Pencil className="w-3.5 h-3.5 mr-2" />
+                      Free Path
+                      {drawingWaypoints.length > 0 && (
+                        <Badge variant="secondary" className="ml-auto text-[10px] h-5 px-1.5">
+                          {drawingWaypoints.length}pt
+                        </Badge>
+                      )}
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent side="right">Draw a custom multi-point path</TooltipContent>
+                </Tooltip>
+
+                {/* Draw path type toggle & finish buttons */}
+                {tool === "draw-path" && (
+                  <div className="space-y-1.5 pl-1">
+                    <div className="flex gap-1">
+                      <Button
+                        variant={drawPathType === "move" ? "default" : "outline"}
+                        size="sm"
+                        className="flex-1 h-7 text-xs"
+                        onClick={() => setDrawPathType("move")}
+                      >
+                        Move
+                      </Button>
+                      <Button
+                        variant={drawPathType === "dribble" ? "default" : "outline"}
+                        size="sm"
+                        className="flex-1 h-7 text-xs"
+                        onClick={() => setDrawPathType("dribble")}
+                      >
+                        Dribble
+                      </Button>
+                    </div>
+                    <div className="flex gap-1">
+                      <Button
+                        size="sm"
+                        className="flex-1 h-7 text-xs gap-1"
+                        onClick={finishDrawPath}
+                        disabled={drawingWaypoints.length === 0}
+                      >
+                        <Check className="w-3 h-3" /> Finish
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="flex-1 h-7 text-xs gap-1"
+                        onClick={cancelDrawPath}
+                      >
+                        <X className="w-3 h-3" /> Cancel
+                      </Button>
+                    </div>
+                  </div>
+                )}
               </CardContent>
             </Card>
 
