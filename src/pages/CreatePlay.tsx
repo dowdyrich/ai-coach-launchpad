@@ -70,15 +70,88 @@ export default function CreatePlay() {
         setPlayName(data.name);
         setPlayMeta(data);
 
-        // Load players
-        const playersData = (data.players_data as unknown as CourtPlayer[]) || [];
+        // Load players - convert from template format if needed
+        const rawPlayers = (data.players_data as any[]) || [];
+        const playersData: CourtPlayer[] = rawPlayers.map((p: any) => {
+          // Template format uses 0-100 percentages and "offense"/"defense" labels
+          const isTemplateFormat = p.x <= 100 && p.y <= 100 && (p.team === "offense" || p.team === "defense" || p.label);
+          return {
+            id: p.id || crypto.randomUUID(),
+            x: isTemplateFormat ? (p.x / 100) * 800 : p.x,
+            y: isTemplateFormat ? (p.y / 100) * 500 : p.y,
+            number: p.number ?? (typeof p.label === "number" ? p.label : parseInt(p.label) || 1),
+            team: (p.team === "offense" || p.team === "home") ? "home" as const : "away" as const,
+          };
+        });
         setPlayers(playersData);
-        const homeCount = playersData.filter((p: CourtPlayer) => p.team === "home").length;
-        const awayCount = playersData.filter((p: CourtPlayer) => p.team === "away").length;
+        const homeCount = playersData.filter((p) => p.team === "home").length;
+        const awayCount = playersData.filter((p) => p.team === "away").length;
         setPlayerCount({ home: homeCount, away: awayCount });
 
-        // Load actions
-        setActions((data.actions_data as unknown as CourtAction[]) || []);
+        // Load actions - convert from template format if needed
+        const rawActions = (data.actions_data as any[]) || [];
+        const hasCoordinateActions = rawActions.length > 0 && rawActions[0].fromX !== undefined;
+        if (hasCoordinateActions) {
+          setActions(rawActions as CourtAction[]);
+        } else {
+          // Convert template descriptive actions to coordinate-based actions
+          // Map player IDs to their positions for generating move paths
+          const playerMap = new Map(playersData.map(p => [
+            // Match by original template ID
+            rawPlayers.find((rp: any) => {
+              const rpNum = rp.number ?? (typeof rp.label === "number" ? rp.label : parseInt(rp.label) || 0);
+              return rpNum === p.number;
+            })?.id || p.id,
+            p,
+          ]));
+
+          const convertedActions: CourtAction[] = [];
+          rawActions.forEach((a: any, i: number) => {
+            const player = a.player ? playerMap.get(a.player) : null;
+            if (a.type === "move" && player) {
+              // Generate a reasonable move destination based on position
+              const moveDir = player.y > 250 ? -80 : 80; // move toward basket
+              convertedActions.push({
+                id: crypto.randomUUID(),
+                type: "move",
+                fromX: player.x,
+                fromY: player.y,
+                toX: player.x + (Math.random() - 0.5) * 120,
+                toY: player.y + moveDir,
+                stepIndex: i,
+              });
+            } else if (a.type === "pass" && a.from && a.to) {
+              const fromPlayer = playerMap.get(a.from);
+              const toPlayer = playerMap.get(a.to);
+              if (fromPlayer && toPlayer) {
+                convertedActions.push({
+                  id: crypto.randomUUID(),
+                  type: "pass",
+                  fromX: fromPlayer.x,
+                  fromY: fromPlayer.y,
+                  toX: toPlayer.x,
+                  toY: toPlayer.y,
+                  stepIndex: i,
+                });
+              }
+            } else if (a.type === "screen" && a.from && a.to) {
+              const fromPlayer = playerMap.get(a.from);
+              const toPlayer = playerMap.get(a.to);
+              if (fromPlayer && toPlayer) {
+                convertedActions.push({
+                  id: crypto.randomUUID(),
+                  type: "screen",
+                  fromX: fromPlayer.x,
+                  fromY: fromPlayer.y,
+                  toX: toPlayer.x,
+                  toY: toPlayer.y,
+                  stepIndex: i,
+                });
+              }
+            }
+          });
+          setActions(convertedActions);
+        }
 
         // Load voice overlays
         setVoiceOverlays((data.voice_overlays as unknown as VoiceOverlayEntry[]) || []);
