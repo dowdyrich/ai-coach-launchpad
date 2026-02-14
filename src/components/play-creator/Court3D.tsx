@@ -1,6 +1,6 @@
 import { Canvas, useFrame } from "@react-three/fiber";
 import { OrbitControls, PerspectiveCamera } from "@react-three/drei";
-import { useMemo, useRef, useEffect } from "react";
+import { useMemo, useRef, useEffect, useState, useCallback } from "react";
 import * as THREE from "three";
 import { PlayerFigure } from "./PlayerFigure";
 import { ActionLine3D } from "./ActionLine3D";
@@ -142,7 +142,6 @@ const toCourtPos = (x: number, y: number): [number, number, number] => {
 
 /**
  * Compute the animated 3D position for each player given the current animation progress.
- * Tracks position changes through each completed step.
  */
 function getAnimatedPlayerPositions(
   players: CourtPlayer[],
@@ -212,26 +211,29 @@ function AnimatedScene({
   const progressRef = useRef(0);
   const playerRefs = useRef<Map<string, THREE.Group>>(new Map());
   const wasAnimating = useRef(false);
+  const animationEndedRef = useRef(false);
   const visibleStepRef = useRef(-1);
-  const actionLinesRef = useRef<THREE.Group>(null);
 
   // Reset progress when animation starts
   useEffect(() => {
     if (isAnimating && !wasAnimating.current) {
       progressRef.current = 0;
+      animationEndedRef.current = false;
       visibleStepRef.current = -1;
+    }
+    if (!isAnimating) {
+      animationEndedRef.current = false;
     }
     wasAnimating.current = isAnimating;
   }, [isAnimating]);
 
   useFrame((_, delta) => {
-    if (!isAnimating) return;
+    if (!isAnimating || animationEndedRef.current) return;
 
     progressRef.current += delta * speed;
 
     if (progressRef.current >= totalSteps) {
       progressRef.current = totalSteps;
-      // Show all action lines
       visibleStepRef.current = totalSteps;
       // Update final positions
       const finalPositions = getAnimatedPlayerPositions(players, actions, totalSteps, totalSteps);
@@ -239,16 +241,15 @@ function AnimatedScene({
         const group = playerRefs.current.get(id);
         if (group) group.position.copy(pos);
       });
-      // End animation after brief hold
+      // Guard: only fire onAnimationEnd once
+      animationEndedRef.current = true;
       setTimeout(() => onAnimationEnd?.(), 800);
       return;
     }
 
     // Update visible step for action lines
     const currentStep = Math.floor(progressRef.current);
-    if (currentStep !== visibleStepRef.current) {
-      visibleStepRef.current = currentStep;
-    }
+    visibleStepRef.current = currentStep;
 
     // Compute and apply animated positions directly to Three.js objects
     const positions = getAnimatedPlayerPositions(players, actions, progressRef.current, totalSteps);
@@ -291,8 +292,8 @@ function AnimatedScene({
         position={[10, 15, 5]}
         intensity={1}
         castShadow
-        shadow-mapSize-width={2048}
-        shadow-mapSize-height={2048}
+        shadow-mapSize-width={1024}
+        shadow-mapSize-height={1024}
       />
       <directionalLight position={[-5, 10, -5]} intensity={0.3} />
 
@@ -331,7 +332,7 @@ function AnimatedScene({
       })}
 
       {/* Action lines */}
-      <group ref={actionLinesRef}>
+      <group>
         {visibleActions.map((a, i) => {
           const [fx, , fz] = toCourtPos(a.fromX, a.fromY);
           const [tx, , tz] = toCourtPos(a.toX, a.toY);
@@ -359,9 +360,38 @@ export function Court3D({
   onAnimationEnd,
   animationSpeed = 0.5,
 }: Court3DProps) {
+  const [contextLost, setContextLost] = useState(false);
+  const [canvasKey, setCanvasKey] = useState(0);
+
   return (
-    <div className="w-full aspect-[16/10] rounded-lg overflow-hidden border border-border bg-background">
-      <Canvas shadows dpr={[1, 2]}>
+    <div className="w-full aspect-[16/10] rounded-lg overflow-hidden border border-border bg-background relative">
+      {contextLost && (
+        <div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-background/90">
+          <p className="text-sm text-muted-foreground mb-2">3D rendering was interrupted</p>
+          <button
+            className="text-sm text-primary underline"
+            onClick={() => {
+              setContextLost(false);
+              setCanvasKey((k) => k + 1);
+            }}
+          >
+            Click to reload
+          </button>
+        </div>
+      )}
+      <Canvas
+        key={canvasKey}
+        shadows
+        dpr={[1, 1.5]}
+        gl={{ antialias: true, powerPreference: "default" }}
+        onCreated={({ gl }) => {
+          const canvas = gl.domElement;
+          canvas.addEventListener("webglcontextlost", (e) => {
+            e.preventDefault();
+            setContextLost(true);
+          });
+        }}
+      >
         <AnimatedScene
           players={players}
           actions={actions}
