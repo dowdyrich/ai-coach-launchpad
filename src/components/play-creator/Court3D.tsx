@@ -1,6 +1,6 @@
-import { Canvas } from "@react-three/fiber";
+import { Canvas, useFrame } from "@react-three/fiber";
 import { OrbitControls, PerspectiveCamera } from "@react-three/drei";
-import { useMemo } from "react";
+import { useMemo, useRef, useEffect } from "react";
 import * as THREE from "three";
 import { PlayerFigure } from "./PlayerFigure";
 import { ActionLine3D } from "./ActionLine3D";
@@ -29,9 +29,9 @@ interface Court3DProps {
   selectedPlayer: string | null;
   onPlayerClick?: (id: string) => void;
   onCourtClick?: (x: number, y: number) => void;
-  activeStep?: number;
-  animationProgress?: number; // float: 0 to totalSteps, fractional for smooth interp
   isAnimating?: boolean;
+  onAnimationEnd?: () => void;
+  animationSpeed?: number;
 }
 
 function CourtFloor() {
@@ -141,68 +141,124 @@ const toCourtPos = (x: number, y: number): [number, number, number] => {
 };
 
 /**
- * Build a position timeline for each player.
- * For each step, find actions whose `from` matches the player's current position
- * (within a tolerance) and move them to `to`.
+ * Compute the animated 3D position for each player given the current animation progress.
+ * Tracks position changes through each completed step.
  */
-function computeAnimatedPositions(
+function getAnimatedPlayerPositions(
   players: CourtPlayer[],
   actions: CourtAction[],
-  animationProgress: number,
+  progress: number,
   totalSteps: number
-): Map<string, [number, number, number]> {
-  const TOLERANCE = 40; // pixels proximity threshold for matching actions to players
-  const positions = new Map<string, [number, number, number]>();
-
-  const completedStep = Math.floor(animationProgress);
-  const stepFraction = animationProgress - completedStep;
+): Map<string, THREE.Vector3> {
+  const TOLERANCE = 50;
+  const positions = new Map<string, THREE.Vector3>();
+  const completedStep = Math.floor(progress);
+  const frac = progress - completedStep;
 
   for (const player of players) {
-    // Build this player's position through each step
-    let currentX = player.x;
-    let currentY = player.y;
+    let cx = player.x;
+    let cy = player.y;
 
     for (let step = 0; step <= Math.min(completedStep, totalSteps - 1); step++) {
-      // Find actions at this step that start near the player's current position
-      const playerActions = actions.filter(
+      const act = actions.find(
         (a) =>
           a.stepIndex === step &&
           (a.type === "move" || a.type === "dribble") &&
-          Math.abs(a.fromX - currentX) < TOLERANCE &&
-          Math.abs(a.fromY - currentY) < TOLERANCE
+          Math.abs(a.fromX - cx) < TOLERANCE &&
+          Math.abs(a.fromY - cy) < TOLERANCE
       );
 
-      if (playerActions.length > 0) {
-        const action = playerActions[0];
+      if (act) {
         if (step < completedStep) {
-          // Fully completed step
-          currentX = action.toX;
-          currentY = action.toY;
+          cx = act.toX;
+          cy = act.toY;
         } else {
-          // Current step - interpolate
-          currentX = action.fromX + (action.toX - action.fromX) * stepFraction;
-          currentY = action.fromY + (action.toY - action.fromY) * stepFraction;
+          cx = act.fromX + (act.toX - act.fromX) * frac;
+          cy = act.fromY + (act.toY - act.fromY) * frac;
         }
       }
     }
 
-    positions.set(player.id, toCourtPos(currentX, currentY));
+    const [px, , pz] = toCourtPos(cx, cy);
+    positions.set(player.id, new THREE.Vector3(px, 0, pz));
   }
 
   return positions;
 }
 
-export function Court3D({
+/**
+ * Inner scene component that runs the animation loop inside useFrame.
+ */
+function AnimatedScene({
   players,
   actions,
   selectedPlayer,
   onPlayerClick,
   onCourtClick,
-  activeStep,
-  animationProgress,
   isAnimating,
-}: Court3DProps) {
+  onAnimationEnd,
+  speed,
+}: {
+  players: CourtPlayer[];
+  actions: CourtAction[];
+  selectedPlayer: string | null;
+  onPlayerClick?: (id: string) => void;
+  onCourtClick?: (x: number, y: number) => void;
+  isAnimating: boolean;
+  onAnimationEnd?: () => void;
+  speed: number;
+}) {
   const totalSteps = actions.length > 0 ? Math.max(...actions.map((a) => a.stepIndex)) + 1 : 1;
+  const progressRef = useRef(0);
+  const playerRefs = useRef<Map<string, THREE.Group>>(new Map());
+  const wasAnimating = useRef(false);
+  const visibleStepRef = useRef(-1);
+  const actionLinesRef = useRef<THREE.Group>(null);
+
+  // Reset progress when animation starts
+  useEffect(() => {
+    if (isAnimating && !wasAnimating.current) {
+      progressRef.current = 0;
+      visibleStepRef.current = -1;
+    }
+    wasAnimating.current = isAnimating;
+  }, [isAnimating]);
+
+  useFrame((_, delta) => {
+    if (!isAnimating) return;
+
+    progressRef.current += delta * speed;
+
+    if (progressRef.current >= totalSteps) {
+      progressRef.current = totalSteps;
+      // Show all action lines
+      visibleStepRef.current = totalSteps;
+      // Update final positions
+      const finalPositions = getAnimatedPlayerPositions(players, actions, totalSteps, totalSteps);
+      finalPositions.forEach((pos, id) => {
+        const group = playerRefs.current.get(id);
+        if (group) group.position.copy(pos);
+      });
+      // End animation after brief hold
+      setTimeout(() => onAnimationEnd?.(), 800);
+      return;
+    }
+
+    // Update visible step for action lines
+    const currentStep = Math.floor(progressRef.current);
+    if (currentStep !== visibleStepRef.current) {
+      visibleStepRef.current = currentStep;
+    }
+
+    // Compute and apply animated positions directly to Three.js objects
+    const positions = getAnimatedPlayerPositions(players, actions, progressRef.current, totalSteps);
+    positions.forEach((pos, id) => {
+      const group = playerRefs.current.get(id);
+      if (group) {
+        group.position.lerp(pos, 0.15);
+      }
+    });
+  });
 
   const handlePointerDown = (e: any) => {
     if (e.object?.userData?.isFloor && onCourtClick) {
@@ -213,88 +269,109 @@ export function Court3D({
     }
   };
 
-  // Compute which actions to show (trail lines for completed steps)
-  const filteredActions = activeStep !== undefined
-    ? actions.filter((a) => a.stepIndex <= activeStep)
-    : isAnimating && animationProgress !== undefined
-    ? actions.filter((a) => a.stepIndex <= Math.floor(animationProgress))
-    : actions;
-
-  // Compute animated positions
-  const animatedPositions = useMemo(() => {
-    if (!isAnimating || animationProgress === undefined) return null;
-    return computeAnimatedPositions(players, actions, animationProgress, totalSteps);
-  }, [isAnimating, animationProgress, players, actions, totalSteps]);
+  // Show all actions when not animating, or progressively during animation
+  const visibleActions = !isAnimating
+    ? actions
+    : actions.filter((a) => a.stepIndex <= visibleStepRef.current);
 
   return (
-    <div className="w-full aspect-[16/10] rounded-lg overflow-hidden border border-border bg-background">
-      <Canvas shadows dpr={[1, 2]}>
-        <PerspectiveCamera makeDefault position={[0, 18, 16]} fov={50} />
-        <OrbitControls
-          enablePan
-          enableZoom
-          enableRotate
-          maxPolarAngle={Math.PI / 2.2}
-          minDistance={8}
-          maxDistance={35}
-        />
+    <>
+      <PerspectiveCamera makeDefault position={[0, 18, 16]} fov={50} />
+      <OrbitControls
+        enablePan
+        enableZoom
+        enableRotate
+        maxPolarAngle={Math.PI / 2.2}
+        minDistance={8}
+        maxDistance={35}
+      />
 
-        <ambientLight intensity={0.5} />
-        <directionalLight
-          position={[10, 15, 5]}
-          intensity={1}
-          castShadow
-          shadow-mapSize-width={2048}
-          shadow-mapSize-height={2048}
-        />
-        <directionalLight position={[-5, 10, -5]} intensity={0.3} />
+      <ambientLight intensity={0.5} />
+      <directionalLight
+        position={[10, 15, 5]}
+        intensity={1}
+        castShadow
+        shadow-mapSize-width={2048}
+        shadow-mapSize-height={2048}
+      />
+      <directionalLight position={[-5, 10, -5]} intensity={0.3} />
 
-        {/* Clickable floor */}
-        <mesh
-          rotation={[-Math.PI / 2, 0, 0]}
-          position={[0, -0.01, 0]}
-          onPointerDown={handlePointerDown}
-          userData={{ isFloor: true }}
-        >
-          <planeGeometry args={[30, 17]} />
-          <meshStandardMaterial transparent opacity={0} />
-        </mesh>
+      {/* Clickable floor */}
+      <mesh
+        rotation={[-Math.PI / 2, 0, 0]}
+        position={[0, -0.01, 0]}
+        onPointerDown={handlePointerDown}
+        userData={{ isFloor: true }}
+      >
+        <planeGeometry args={[30, 17]} />
+        <meshStandardMaterial transparent opacity={0} />
+      </mesh>
 
-        <CourtFloor />
-        <BackboardAndHoop side={1} />
-        <BackboardAndHoop side={-1} />
+      <CourtFloor />
+      <BackboardAndHoop side={1} />
+      <BackboardAndHoop side={-1} />
 
-        {/* Players */}
-        {players.map((p) => {
-          const [px, , pz] = toCourtPos(p.x, p.y);
-          const animTarget = animatedPositions?.get(p.id);
-          return (
-            <PlayerFigure
-              key={p.id}
-              position={[px, 0, pz]}
-              number={p.number}
-              team={p.team}
-              isSelected={p.id === selectedPlayer}
-              onClick={() => onPlayerClick?.(p.id)}
-              targetPosition={animTarget}
-              animating={!!isAnimating}
-            />
-          );
-        })}
+      {/* Players */}
+      {players.map((p) => {
+        const [px, , pz] = toCourtPos(p.x, p.y);
+        return (
+          <PlayerFigure
+            key={p.id}
+            ref={(ref: THREE.Group | null) => {
+              if (ref) playerRefs.current.set(p.id, ref);
+              else playerRefs.current.delete(p.id);
+            }}
+            position={[px, 0, pz]}
+            number={p.number}
+            team={p.team}
+            isSelected={p.id === selectedPlayer}
+            onClick={() => onPlayerClick?.(p.id)}
+          />
+        );
+      })}
 
-        {/* Action lines */}
-        {filteredActions.map((a, i) => {
+      {/* Action lines */}
+      <group ref={actionLinesRef}>
+        {visibleActions.map((a, i) => {
           const [fx, , fz] = toCourtPos(a.fromX, a.fromY);
           const [tx, , tz] = toCourtPos(a.toX, a.toY);
           return (
             <ActionLine3D
-              key={i}
+              key={`${a.id}-${i}`}
               from={[fx, 0.5, fz]}
               to={[tx, 0.5, tz]}
               type={a.type}
             />
           );
         })}
+      </group>
+    </>
+  );
+}
+
+export function Court3D({
+  players,
+  actions,
+  selectedPlayer,
+  onPlayerClick,
+  onCourtClick,
+  isAnimating,
+  onAnimationEnd,
+  animationSpeed = 0.5,
+}: Court3DProps) {
+  return (
+    <div className="w-full aspect-[16/10] rounded-lg overflow-hidden border border-border bg-background">
+      <Canvas shadows dpr={[1, 2]}>
+        <AnimatedScene
+          players={players}
+          actions={actions}
+          selectedPlayer={selectedPlayer}
+          onPlayerClick={onPlayerClick}
+          onCourtClick={onCourtClick}
+          isAnimating={!!isAnimating}
+          onAnimationEnd={onAnimationEnd}
+          speed={animationSpeed}
+        />
       </Canvas>
     </div>
   );
