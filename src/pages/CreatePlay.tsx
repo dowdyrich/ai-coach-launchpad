@@ -19,12 +19,16 @@ import { toast } from "sonner";
 
 type Tool = "select" | "player-offense" | "player-defense" | "move" | "pass" | "screen" | "screen-player" | "dribble" | "draw-path";
 
+const POSITIONS = ["PG", "SG", "SF", "PF", "C"] as const;
+type Position = typeof POSITIONS[number];
+
 interface CourtPlayer {
   id: string;
   x: number;
   y: number;
   number: number;
   team: "home" | "away";
+  position?: Position;
 }
 
 interface CourtAction {
@@ -45,6 +49,7 @@ export default function CreatePlay() {
   const { user } = useAuth();
 
   const [tool, setTool] = useState<Tool>("select");
+  const [pendingPosition, setPendingPosition] = useState<{ team: "home" | "away"; position: Position } | null>(null);
   const [players, setPlayers] = useState<CourtPlayer[]>([]);
   const [actions, setActions] = useState<CourtAction[]>([]);
   const [selectedPlayer, setSelectedPlayer] = useState<string | null>(null);
@@ -181,23 +186,30 @@ export default function CreatePlay() {
   const totalSteps = actions.length > 0 ? Math.max(...actions.map(a => a.stepIndex)) + 1 : 1;
 
   const handleCourtClick = useCallback((x: number, y: number) => {
-    if (tool === "player-offense" || tool === "player-defense") {
-      const team = tool === "player-offense" ? "home" : "away";
+    if ((tool === "player-offense" || tool === "player-defense") && pendingPosition) {
+      const team = pendingPosition.team;
+      const position = pendingPosition.position;
+      const posIndex = POSITIONS.indexOf(position);
       const count = team === "home" ? playerCount.home : playerCount.away;
-      if (count >= 5) {
-        toast.error(`Maximum 5 ${team === "home" ? "offense" : "defense"} players reached`);
+      // Check if position already placed
+      const alreadyPlaced = players.some(p => p.team === team && p.position === position);
+      if (alreadyPlaced) {
+        toast.error(`${position} already placed for ${team === "home" ? "offense" : "defense"}`);
         return;
       }
       const newPlayer: CourtPlayer = {
         id: crypto.randomUUID(),
         x,
         y,
-        number: count + 1,
+        number: posIndex + 1,
         team,
+        position,
       };
       setPlayers((prev) => [...prev, newPlayer]);
       setPlayerCount((prev) => ({ ...prev, [team]: prev[team] + 1 }));
-      toast.success(`${team === "home" ? "Offense" : "Defense"} player #${count + 1} added`);
+      setPendingPosition(null);
+      setTool("select");
+      toast.success(`${team === "home" ? "Offense" : "Defense"} ${position} added`);
     } else if (tool === "select") {
       setSelectedPlayer(null);
     } else if (tool === "draw-path" && selectedPlayer) {
@@ -232,7 +244,7 @@ export default function CreatePlay() {
         toast.success(`${tool.charAt(0).toUpperCase() + tool.slice(1)} action added`);
       }
     }
-  }, [tool, playerCount, selectedPlayer, players, currentStep]);
+  }, [tool, pendingPosition, playerCount, selectedPlayer, players, currentStep]);
 
   // Screen-for-player: clicking another player to set screen near them
   const handlePlayerClick = useCallback((id: string) => {
@@ -353,8 +365,8 @@ export default function CreatePlay() {
   const getToolHint = (): string => {
     switch (tool) {
       case "select": return selectedPlayer ? "Player selected — choose an action tool or click elsewhere to deselect" : "Click a player to select it";
-      case "player-offense": return `Click on the court to place an offense player (${playerCount.home}/5)`;
-      case "player-defense": return `Click on the court to place a defense player (${playerCount.away}/5)`;
+      case "player-offense": return pendingPosition ? `Click on the court to place offense ${pendingPosition.position}` : "Select a position to place";
+      case "player-defense": return pendingPosition ? `Click on the court to place defense ${pendingPosition.position}` : "Select a position to place";
       case "move": return selectedPlayer ? "Click on the court to set the move destination" : "Select a player first, then click to set destination";
       case "pass": return selectedPlayer ? "Click on the court to set the pass target" : "Select a player first, then click the pass target";
       case "screen": return selectedPlayer ? "Click on the court to move and set a screen at that location" : "Select a player first";
@@ -406,51 +418,83 @@ export default function CreatePlay() {
         <div className="grid grid-cols-1 lg:grid-cols-[220px_1fr_240px] gap-4">
           {/* Left Sidebar — Tools */}
           <div className="space-y-3">
-            {/* Players section */}
+            {/* Offense Players */}
             <Card>
               <CardHeader className="pb-2 pt-3 px-3">
-                <CardTitle className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Players</CardTitle>
+                <CardTitle className="text-xs font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                  <Swords className="w-3 h-3" />
+                  Offense
+                  <Badge variant="secondary" className="ml-auto text-[10px] h-5 px-1.5">{playerCount.home}/5</Badge>
+                </CardTitle>
               </CardHeader>
-              <CardContent className="px-3 pb-3 space-y-1.5">
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <Button
-                      variant={tool === "player-offense" ? "default" : "outline"}
-                      className={cn(
-                        "w-full justify-start h-9 text-sm",
-                        tool === "player-offense" && "bg-primary text-primary-foreground"
-                      )}
-                      onClick={() => setTool("player-offense")}
-                    >
-                      <Swords className="w-3.5 h-3.5 mr-2" />
-                      Offense
-                      <Badge variant="secondary" className="ml-auto text-[10px] h-5 px-1.5">
-                        {playerCount.home}/5
-                      </Badge>
-                    </Button>
-                  </TooltipTrigger>
-                  <TooltipContent side="right">Add offensive player to court</TooltipContent>
-                </Tooltip>
+              <CardContent className="px-3 pb-3 grid grid-cols-5 gap-1">
+                {POSITIONS.map((pos) => {
+                  const placed = players.some(p => p.team === "home" && p.position === pos);
+                  const isActive = tool === "player-offense" && pendingPosition?.position === pos && pendingPosition?.team === "home";
+                  return (
+                    <Tooltip key={pos}>
+                      <TooltipTrigger asChild>
+                        <Button
+                          variant={isActive ? "default" : placed ? "secondary" : "outline"}
+                          className={cn(
+                            "h-9 px-0 text-xs font-bold",
+                            isActive && "bg-primary text-primary-foreground ring-2 ring-primary/50",
+                            placed && !isActive && "opacity-50 cursor-default"
+                          )}
+                          disabled={placed}
+                          onClick={() => {
+                            setPendingPosition({ team: "home", position: pos });
+                            setTool("player-offense");
+                          }}
+                        >
+                          {pos}
+                          {placed && <Check className="w-2.5 h-2.5 ml-0.5" />}
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent side="right">{placed ? `${pos} already placed` : `Place offense ${pos} on court`}</TooltipContent>
+                    </Tooltip>
+                  );
+                })}
+              </CardContent>
+            </Card>
 
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <Button
-                      variant={tool === "player-defense" ? "default" : "outline"}
-                      className={cn(
-                        "w-full justify-start h-9 text-sm",
-                        tool === "player-defense" && "bg-destructive text-destructive-foreground"
-                      )}
-                      onClick={() => setTool("player-defense")}
-                    >
-                      <Shield className="w-3.5 h-3.5 mr-2" />
-                      Defense
-                      <Badge variant="secondary" className="ml-auto text-[10px] h-5 px-1.5">
-                        {playerCount.away}/5
-                      </Badge>
-                    </Button>
-                  </TooltipTrigger>
-                  <TooltipContent side="right">Add defensive player to court</TooltipContent>
-                </Tooltip>
+            {/* Defense Players */}
+            <Card>
+              <CardHeader className="pb-2 pt-3 px-3">
+                <CardTitle className="text-xs font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                  <Shield className="w-3 h-3" />
+                  Defense
+                  <Badge variant="secondary" className="ml-auto text-[10px] h-5 px-1.5">{playerCount.away}/5</Badge>
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="px-3 pb-3 grid grid-cols-5 gap-1">
+                {POSITIONS.map((pos) => {
+                  const placed = players.some(p => p.team === "away" && p.position === pos);
+                  const isActive = tool === "player-defense" && pendingPosition?.position === pos && pendingPosition?.team === "away";
+                  return (
+                    <Tooltip key={pos}>
+                      <TooltipTrigger asChild>
+                        <Button
+                          variant={isActive ? "default" : placed ? "secondary" : "outline"}
+                          className={cn(
+                            "h-9 px-0 text-xs font-bold",
+                            isActive && "bg-destructive text-destructive-foreground ring-2 ring-destructive/50",
+                            placed && !isActive && "opacity-50 cursor-default"
+                          )}
+                          disabled={placed}
+                          onClick={() => {
+                            setPendingPosition({ team: "away", position: pos });
+                            setTool("player-defense");
+                          }}
+                        >
+                          {pos}
+                          {placed && <Check className="w-2.5 h-2.5 ml-0.5" />}
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent side="right">{placed ? `${pos} already placed` : `Place defense ${pos} on court`}</TooltipContent>
+                    </Tooltip>
+                  );
+                })}
               </CardContent>
             </Card>
 
