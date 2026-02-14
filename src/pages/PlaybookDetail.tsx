@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useParams, Link } from "react-router-dom";
+import { useParams, Link, useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/lib/auth";
 import { Card, CardContent } from "@/components/ui/card";
@@ -15,6 +15,7 @@ import { toast } from "sonner";
 export default function PlaybookDetail() {
   const { id } = useParams();
   const { user } = useAuth();
+  const navigate = useNavigate();
   const [playbook, setPlaybook] = useState<any>(null);
   const [plays, setPlays] = useState<any[]>([]);
   const [templates, setTemplates] = useState<any[]>([]);
@@ -238,7 +239,11 @@ export default function PlaybookDetail() {
       ) : (
         <div className="space-y-3">
           {plays.map((play) => (
-            <Card key={play.id} className="hover:shadow-md transition-shadow">
+            <Card
+              key={play.id}
+              className="hover:shadow-md transition-shadow cursor-pointer"
+              onClick={() => navigate(`/create?playId=${play.id}`)}
+            >
               <CardContent className="p-5 flex items-center gap-4">
                 <div className="w-10 h-10 bg-secondary/10 rounded-xl flex items-center justify-center">
                   <PlayCircle className="w-5 h-5 text-secondary" />
@@ -250,7 +255,12 @@ export default function PlaybookDetail() {
                     <span className="text-xs px-2 py-0.5 bg-muted text-muted-foreground rounded-full capitalize">{play.difficulty}</span>
                   </div>
                 </div>
-                <Button variant="ghost" size="icon" onClick={() => deletePlay(play.id)}>
+                <ChevronRight className="w-4 h-4 text-muted-foreground" />
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={(e) => { e.stopPropagation(); deletePlay(play.id); }}
+                >
                   <Trash2 className="w-4 h-4 text-destructive" />
                 </Button>
               </CardContent>
