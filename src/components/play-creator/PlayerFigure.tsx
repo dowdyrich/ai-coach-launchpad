@@ -9,21 +9,34 @@ interface PlayerFigureProps {
   team: "home" | "away";
   isSelected: boolean;
   onClick: () => void;
+  targetPosition?: [number, number, number];
+  animating?: boolean;
 }
 
-export function PlayerFigure({ position, number, team, isSelected, onClick }: PlayerFigureProps) {
+export function PlayerFigure({ position, number, team, isSelected, onClick, targetPosition, animating }: PlayerFigureProps) {
   const groupRef = useRef<THREE.Group>(null);
   const glowRef = useRef<THREE.Mesh>(null);
+  const currentPos = useRef(new THREE.Vector3(...position));
 
   const teamColor = team === "home" ? "hsl(221, 83%, 53%)" : "hsl(0, 84%, 60%)";
   const skinColor = "hsl(30, 50%, 65%)";
   const shortsColor = team === "home" ? "hsl(221, 83%, 40%)" : "hsl(0, 84%, 45%)";
 
-  useFrame((state) => {
+  useFrame((state, delta) => {
+    if (!groupRef.current) return;
+
     if (glowRef.current && isSelected) {
       const s = 1 + Math.sin(state.clock.elapsedTime * 3) * 0.08;
       glowRef.current.scale.set(s, s, s);
     }
+
+    // Smooth lerp to target position during animation
+    const target = animating && targetPosition
+      ? new THREE.Vector3(...targetPosition)
+      : new THREE.Vector3(...position);
+
+    currentPos.current.lerp(target, Math.min(1, delta * 4));
+    groupRef.current.position.copy(currentPos.current);
   });
 
   return (

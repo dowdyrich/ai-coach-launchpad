@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import { useSearchParams, Link } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/lib/auth";
@@ -46,7 +46,7 @@ export default function CreatePlay() {
   const [currentStep, setCurrentStep] = useState(0);
   const [voiceOverlays, setVoiceOverlays] = useState<VoiceOverlayEntry[]>([]);
   const [isAnimating, setIsAnimating] = useState(false);
-  const [animationStep, setAnimationStep] = useState(0);
+  const [animationProgress, setAnimationProgress] = useState(0);
   const [playName, setPlayName] = useState("Untitled Play");
   const [playMeta, setPlayMeta] = useState<any>(null);
   const [loadingPlay, setLoadingPlay] = useState(!!playId);
@@ -140,24 +140,43 @@ export default function CreatePlay() {
     setSelectedPlayer(id);
   }, []);
 
+  const animRef = useRef<number | null>(null);
+
   const toggleAnimation = () => {
     if (isAnimating) {
       setIsAnimating(false);
+      if (animRef.current) cancelAnimationFrame(animRef.current);
+      setAnimationProgress(0);
       return;
     }
     setIsAnimating(true);
-    setAnimationStep(0);
-    let step = 0;
-    const interval = setInterval(() => {
-      step++;
-      if (step >= totalSteps) {
-        clearInterval(interval);
-        setIsAnimating(false);
-        setAnimationStep(0);
+    setAnimationProgress(0);
+
+    const speed = 0.6; // steps per second
+    let lastTime: number | null = null;
+    let progress = 0;
+
+    const tick = (time: number) => {
+      if (lastTime === null) lastTime = time;
+      const dt = (time - lastTime) / 1000;
+      lastTime = time;
+      progress += dt * speed;
+
+      if (progress >= totalSteps) {
+        setAnimationProgress(totalSteps);
+        // Hold final position briefly then reset
+        setTimeout(() => {
+          setIsAnimating(false);
+          setAnimationProgress(0);
+        }, 800);
         return;
       }
-      setAnimationStep(step);
-    }, 1500);
+
+      setAnimationProgress(progress);
+      animRef.current = requestAnimationFrame(tick);
+    };
+
+    animRef.current = requestAnimationFrame(tick);
   };
 
   const tools: { id: Tool; icon: typeof MousePointer2; label: string }[] = [
@@ -267,7 +286,9 @@ export default function CreatePlay() {
               selectedPlayer={selectedPlayer}
               onPlayerClick={handlePlayerClick}
               onCourtClick={handleCourtClick}
-              activeStep={isAnimating ? animationStep : undefined}
+              activeStep={isAnimating ? undefined : undefined}
+              animationProgress={isAnimating ? animationProgress : undefined}
+              isAnimating={isAnimating}
             />
             <div className="flex items-center gap-4 mt-4 text-sm text-muted-foreground">
               <span className="flex items-center gap-2">
