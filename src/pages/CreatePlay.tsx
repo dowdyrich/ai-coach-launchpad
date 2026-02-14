@@ -43,6 +43,31 @@ interface CourtAction {
   delay?: number;
 }
 
+// Compute a player's effective position after all actions before the given step
+function getPlayerPositionAtStep(
+  player: CourtPlayer,
+  actions: CourtAction[],
+  targetStep: number
+): { x: number; y: number } {
+  const TOLERANCE = 50;
+  let cx = player.x;
+  let cy = player.y;
+  for (let step = 0; step < targetStep; step++) {
+    const act = actions.find(
+      (a) =>
+        a.stepIndex === step &&
+        (a.type === "move" || a.type === "dribble" || a.type === "screen") &&
+        Math.abs(a.fromX - cx) < TOLERANCE &&
+        Math.abs(a.fromY - cy) < TOLERANCE
+    );
+    if (act) {
+      cx = act.toX;
+      cy = act.toY;
+    }
+  }
+  return { x: cx, y: cy };
+}
+
 export default function CreatePlay() {
   const [searchParams] = useSearchParams();
   const playId = searchParams.get("playId");
@@ -218,11 +243,12 @@ export default function CreatePlay() {
       // Screen to location: move to spot and set screen
       const player = players.find(p => p.id === selectedPlayer);
       if (player) {
+        const pos = getPlayerPositionAtStep(player, actions, currentStep);
         setActions(prev => [...prev, {
           id: crypto.randomUUID(),
           type: "screen",
-          fromX: player.x,
-          fromY: player.y,
+          fromX: pos.x,
+          fromY: pos.y,
           toX: x,
           toY: y,
           stepIndex: currentStep,
@@ -232,11 +258,12 @@ export default function CreatePlay() {
     } else if ((tool === "pass" || tool === "move" || tool === "dribble") && selectedPlayer) {
       const player = players.find(p => p.id === selectedPlayer);
       if (player) {
+        const pos = getPlayerPositionAtStep(player, actions, currentStep);
         setActions(prev => [...prev, {
           id: crypto.randomUUID(),
           type: tool,
-          fromX: player.x,
-          fromY: player.y,
+          fromX: pos.x,
+          fromY: pos.y,
           toX: x,
           toY: y,
           stepIndex: currentStep,
@@ -244,7 +271,7 @@ export default function CreatePlay() {
         toast.success(`${tool.charAt(0).toUpperCase() + tool.slice(1)} action added`);
       }
     }
-  }, [tool, pendingPosition, playerCount, selectedPlayer, players, currentStep]);
+  }, [tool, pendingPosition, playerCount, selectedPlayer, players, actions, currentStep]);
 
   // Screen-for-player: clicking another player to set screen near them
   const handlePlayerClick = useCallback((id: string) => {
@@ -252,15 +279,16 @@ export default function CreatePlay() {
       const screener = players.find(p => p.id === selectedPlayer);
       const target = players.find(p => p.id === id);
       if (screener && target) {
-        // Position screen slightly offset from target
-        const offsetX = target.x + (screener.x > target.x ? -30 : 30);
+        const screenerPos = getPlayerPositionAtStep(screener, actions, currentStep);
+        const targetPos = getPlayerPositionAtStep(target, actions, currentStep);
+        const offsetX = targetPos.x + (screenerPos.x > targetPos.x ? -30 : 30);
         setActions(prev => [...prev, {
           id: crypto.randomUUID(),
           type: "screen",
-          fromX: screener.x,
-          fromY: screener.y,
+          fromX: screenerPos.x,
+          fromY: screenerPos.y,
           toX: offsetX,
-          toY: target.y,
+          toY: targetPos.y,
           stepIndex: currentStep,
         }]);
         toast.success(`Screen set for Player #${target.number}`);
@@ -272,19 +300,20 @@ export default function CreatePlay() {
     if (tool === "player-offense" || tool === "player-defense") {
       setTool("select");
     }
-  }, [tool, selectedPlayer, players, currentStep]);
+  }, [tool, selectedPlayer, players, actions, currentStep]);
 
   const finishDrawPath = useCallback(() => {
     if (!selectedPlayer || drawingWaypoints.length === 0) return;
     const player = players.find(p => p.id === selectedPlayer);
     if (!player) return;
+    const pos = getPlayerPositionAtStep(player, actions, currentStep);
     const lastPoint = drawingWaypoints[drawingWaypoints.length - 1];
     const middleWaypoints = drawingWaypoints.length > 1 ? drawingWaypoints.slice(0, -1) : undefined;
     setActions(prev => [...prev, {
       id: crypto.randomUUID(),
       type: drawPathType,
-      fromX: player.x,
-      fromY: player.y,
+      fromX: pos.x,
+      fromY: pos.y,
       toX: lastPoint.x,
       toY: lastPoint.y,
       stepIndex: currentStep,
@@ -292,7 +321,7 @@ export default function CreatePlay() {
     }]);
     setDrawingWaypoints([]);
     toast.success(`Free path (${drawPathType}) added with ${drawingWaypoints.length} points`);
-  }, [selectedPlayer, drawingWaypoints, drawPathType, players, currentStep]);
+  }, [selectedPlayer, drawingWaypoints, drawPathType, players, actions, currentStep]);
 
   const cancelDrawPath = useCallback(() => {
     setDrawingWaypoints([]);
