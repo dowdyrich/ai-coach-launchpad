@@ -38,6 +38,8 @@ interface Court3DProps {
   onAnimationEnd?: () => void;
   animationSpeed?: number;
   courtMode?: CourtMode;
+  /** Current editing step index */
+  currentStep?: number;
   /** Live preview waypoints for free-path drawing */
   drawingPreview?: { playerX: number; playerY: number; waypoints: { x: number; y: number }[] } | null;
 }
@@ -303,6 +305,33 @@ function fromCourtPos(px: number, pz: number, mode: CourtMode): [number, number]
   return [((px + HALF_L) / COURT_LENGTH) * 800, ((pz + HALF_W) / COURT_WIDTH) * 500];
 }
 
+// ── Compute player position at a given editing step ──────────────
+function getPlayerPositionAtEditingStep(
+  player: CourtPlayer,
+  actions: CourtAction[],
+  targetStep: number,
+  mode: CourtMode
+): [number, number, number] {
+  const TOLERANCE = 50;
+  let cx = player.x;
+  let cy = player.y;
+  for (let step = 0; step < targetStep; step++) {
+    const act = actions.find(
+      (a) =>
+        a.stepIndex === step &&
+        (a.type === "move" || a.type === "dribble" || a.type === "screen") &&
+        Math.abs(a.fromX - cx) < TOLERANCE &&
+        Math.abs(a.fromY - cy) < TOLERANCE
+    );
+    if (act) {
+      cx = act.toX;
+      cy = act.toY;
+    }
+  }
+  const [px, , pz] = toCourtPos(cx, cy, mode);
+  return [px, 0, pz];
+}
+
 // ── Animation helper ─────────────────────────────────────────────
 function getAnimatedPlayerPositions(
   players: CourtPlayer[],
@@ -375,6 +404,7 @@ function AnimatedScene({
   speed,
   courtMode,
   drawingPreview,
+  editingStep,
 }: {
   players: CourtPlayer[];
   actions: CourtAction[];
@@ -386,6 +416,7 @@ function AnimatedScene({
   speed: number;
   courtMode: CourtMode;
   drawingPreview?: { playerX: number; playerY: number; waypoints: { x: number; y: number }[] } | null;
+  editingStep: number;
 }) {
   const totalSteps = actions.length > 0 ? Math.max(...actions.map((a) => a.stepIndex)) + 1 : 1;
   const progressRef = useRef(0);
@@ -443,7 +474,7 @@ function AnimatedScene({
   };
 
   const visibleActions = !isAnimating
-    ? actions
+    ? actions.filter((a) => a.stepIndex === editingStep)
     : actions.filter((a) => a.stepIndex <= visibleStepRef.current);
 
   // Camera position based on mode
@@ -517,9 +548,10 @@ function AnimatedScene({
       <BackboardAndHoop side={1} />
       {courtMode === "full" && <BackboardAndHoop side={-1} />}
 
-      {/* Players */}
+      {/* Players – positioned at their effective location for the current editing step */}
       {players.map((p) => {
-        const [px, , pz] = toCourtPos(p.x, p.y, courtMode);
+        // Compute position after all actions before the editing step
+        const pos = getPlayerPositionAtEditingStep(p, actions, editingStep, courtMode);
         return (
           <PlayerFigure
             key={p.id}
@@ -527,7 +559,7 @@ function AnimatedScene({
               if (ref) playerRefs.current.set(p.id, ref);
               else playerRefs.current.delete(p.id);
             }}
-            position={[px, 0, pz]}
+            position={pos}
             number={p.number}
             team={p.team}
             isSelected={p.id === selectedPlayer}
@@ -608,6 +640,7 @@ export function Court3D({
   onAnimationEnd,
   animationSpeed = 0.5,
   courtMode = "full",
+  currentStep = 0,
   drawingPreview,
 }: Court3DProps) {
   const [contextLost, setContextLost] = useState(false);
@@ -653,6 +686,7 @@ export function Court3D({
           speed={animationSpeed}
           courtMode={courtMode}
           drawingPreview={drawingPreview}
+          editingStep={currentStep}
         />
       </Canvas>
     </div>
