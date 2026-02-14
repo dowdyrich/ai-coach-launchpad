@@ -27,11 +27,11 @@ const App = () => (
           <Routes>
             <Route path="/" element={<Landing />} />
             <Route path="/auth" element={<Auth />} />
+            <Route path="/create" element={<CreatePlay />} />
             <Route element={<AppLayout />}>
               <Route path="/dashboard" element={<Dashboard />} />
               <Route path="/playbooks" element={<Playbooks />} />
               <Route path="/playbooks/:id" element={<PlaybookDetail />} />
-              <Route path="/create" element={<CreatePlay />} />
               <Route path="/videos" element={<Videos />} />
               <Route path="/whiteboard" element={<Whiteboard />} />
               <Route path="/coach-ai" element={<CoachAI />} />
