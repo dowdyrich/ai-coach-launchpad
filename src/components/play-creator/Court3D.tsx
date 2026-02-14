@@ -309,7 +309,8 @@ function getAnimatedPlayerPositions(
   actions: CourtAction[],
   progress: number,
   totalSteps: number,
-  mode: CourtMode
+  mode: CourtMode,
+  speed: number = 1
 ): Map<string, THREE.Vector3> {
   const TOLERANCE = 50;
   const positions = new Map<string, THREE.Vector3>();
@@ -330,9 +331,11 @@ function getAnimatedPlayerPositions(
       );
 
       if (act) {
-        // Calculate effective fraction considering delay
+        // Convert delay from seconds to fraction of step duration
+        // Step duration in seconds = 1/speed, so delayFrac = delay * speed, clamped to < 1
         const delay = act.delay || 0;
-        const effectiveFrac = step < completedStep ? 1 : Math.max(0, (frac - delay) / (1 - delay));
+        const delayFrac = Math.min(delay * speed, 0.99);
+        const effectiveFrac = step < completedStep ? 1 : Math.max(0, (frac - delayFrac) / (1 - delayFrac));
         
         if (step < completedStep || effectiveFrac >= 1) {
           cx = act.toX;
@@ -411,7 +414,7 @@ function AnimatedScene({
     if (progressRef.current >= totalSteps) {
       progressRef.current = totalSteps;
       visibleStepRef.current = totalSteps;
-      const finalPositions = getAnimatedPlayerPositions(players, actions, totalSteps, totalSteps, courtMode);
+      const finalPositions = getAnimatedPlayerPositions(players, actions, totalSteps, totalSteps, courtMode, speed);
       finalPositions.forEach((pos, id) => {
         const group = playerRefs.current.get(id);
         if (group) group.position.copy(pos);
@@ -424,7 +427,7 @@ function AnimatedScene({
     const currentStep = Math.floor(progressRef.current);
     visibleStepRef.current = currentStep;
 
-    const positions = getAnimatedPlayerPositions(players, actions, progressRef.current, totalSteps, courtMode);
+    const positions = getAnimatedPlayerPositions(players, actions, progressRef.current, totalSteps, courtMode, speed);
     positions.forEach((pos, id) => {
       const group = playerRefs.current.get(id);
       if (group) group.position.lerp(pos, 0.15);
