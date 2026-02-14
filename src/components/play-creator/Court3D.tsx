@@ -424,12 +424,21 @@ function AnimatedScene({
   const wasAnimating = useRef(false);
   const animationEndedRef = useRef(false);
   const visibleStepRef = useRef(-1);
+  /** Phase: "preview" = showing lines before step, "moving" = animating movement */
+  const phaseRef = useRef<"preview" | "moving">("preview");
+  const previewTimerRef = useRef(0);
+  /** Whether to show action lines during animation (only during preview phase) */
+  const showLinesRef = useRef(false);
+  const PREVIEW_DURATION = 1.0; // seconds to show lines before animating
 
   useEffect(() => {
     if (isAnimating && !wasAnimating.current) {
       progressRef.current = 0;
       animationEndedRef.current = false;
-      visibleStepRef.current = -1;
+      visibleStepRef.current = 0;
+      phaseRef.current = "preview";
+      previewTimerRef.current = 0;
+      showLinesRef.current = true;
     }
     if (!isAnimating) {
       animationEndedRef.current = false;
@@ -440,6 +449,30 @@ function AnimatedScene({
   useFrame((_, delta) => {
     if (!isAnimating || animationEndedRef.current) return;
 
+    const currentStep = Math.floor(progressRef.current);
+
+    // Preview phase: show action lines for PREVIEW_DURATION, then switch to moving
+    if (phaseRef.current === "preview") {
+      previewTimerRef.current += delta;
+      visibleStepRef.current = currentStep;
+      showLinesRef.current = true;
+
+      // Position players at start of this step (no movement yet)
+      const positions = getAnimatedPlayerPositions(players, actions, currentStep, totalSteps, courtMode, speed);
+      positions.forEach((pos, id) => {
+        const group = playerRefs.current.get(id);
+        if (group) group.position.copy(pos);
+      });
+
+      if (previewTimerRef.current >= PREVIEW_DURATION) {
+        phaseRef.current = "moving";
+        showLinesRef.current = false;
+      }
+      return;
+    }
+
+    // Moving phase: animate players, hide action lines
+    showLinesRef.current = false;
     progressRef.current += delta * speed;
 
     if (progressRef.current >= totalSteps) {
@@ -455,7 +488,16 @@ function AnimatedScene({
       return;
     }
 
-    const currentStep = Math.floor(progressRef.current);
+    const newStep = Math.floor(progressRef.current);
+    // Crossed into a new step – switch to preview phase
+    if (newStep > currentStep) {
+      visibleStepRef.current = newStep;
+      phaseRef.current = "preview";
+      previewTimerRef.current = 0;
+      showLinesRef.current = true;
+      return;
+    }
+
     visibleStepRef.current = currentStep;
 
     const positions = getAnimatedPlayerPositions(players, actions, progressRef.current, totalSteps, courtMode, speed);
@@ -475,7 +517,9 @@ function AnimatedScene({
 
   const visibleActions = !isAnimating
     ? actions.filter((a) => a.stepIndex === editingStep)
-    : actions.filter((a) => a.stepIndex <= visibleStepRef.current);
+    : showLinesRef.current
+      ? actions.filter((a) => a.stepIndex === visibleStepRef.current)
+      : [];
 
   // Camera position based on mode
   const camPos: [number, number, number] = courtMode === "half"
