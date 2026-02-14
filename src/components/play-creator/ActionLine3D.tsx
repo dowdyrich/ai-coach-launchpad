@@ -1,4 +1,5 @@
-import { useMemo } from "react";
+import { useMemo, useRef } from "react";
+import { useFrame } from "@react-three/fiber";
 import * as THREE from "three";
 
 interface ActionLine3DProps {
@@ -9,16 +10,32 @@ interface ActionLine3DProps {
 }
 
 const ACTION_COLORS: Record<string, string> = {
-  pass: "hsl(0, 0%, 100%)",
-  move: "hsl(50, 100%, 55%)",
-  screen: "hsl(0, 80%, 60%)",
-  dribble: "hsl(120, 70%, 55%)",
+  pass: "#ffffff",
+  move: "#fbbf24",
+  screen: "#ef4444",
+  dribble: "#22c55e",
+};
+
+const ACTION_EMISSIVE: Record<string, string> = {
+  pass: "#aabbff",
+  move: "#fbbf24",
+  screen: "#ff4444",
+  dribble: "#22ff55",
 };
 
 export function ActionLine3D({ from, to, type, waypoints }: ActionLine3DProps) {
   const color = ACTION_COLORS[type] || "white";
+  const emissive = ACTION_EMISSIVE[type] || "#ffffff";
+  const glowRef = useRef<THREE.Mesh>(null);
 
-  const { tubeGeometry, arrowGeometry, arrowRotation, dotPositions } = useMemo(() => {
+  useFrame((state) => {
+    if (glowRef.current) {
+      const mat = glowRef.current.material as THREE.MeshBasicMaterial;
+      mat.opacity = 0.15 + Math.sin(state.clock.elapsedTime * 3) * 0.08;
+    }
+  });
+
+  const { tubeGeometry, glowTubeGeometry, arrowGeometry, arrowRotation, dotPositions } = useMemo(() => {
     const start = new THREE.Vector3(...from);
     const end = new THREE.Vector3(...to);
 
@@ -26,13 +43,11 @@ export function ActionLine3D({ from, to, type, waypoints }: ActionLine3DProps) {
     const dots: THREE.Vector3[] = [];
 
     if (waypoints && waypoints.length > 0) {
-      // Build a CatmullRom curve through all points
       const allPoints = [
         start,
         ...waypoints.map(w => new THREE.Vector3(...w)),
         end,
       ];
-      // Store intermediate waypoints for dot markers
       waypoints.forEach(w => dots.push(new THREE.Vector3(...w)));
       curve = new THREE.CatmullRomCurve3(allPoints, false, "centripetal", 0.5);
     } else {
@@ -42,33 +57,58 @@ export function ActionLine3D({ from, to, type, waypoints }: ActionLine3DProps) {
     }
 
     const segments = waypoints && waypoints.length > 0 ? Math.max(40, waypoints.length * 16) : 20;
-    const tube = new THREE.TubeGeometry(curve, segments, 0.03, 8, false);
+    const tube = new THREE.TubeGeometry(curve, segments, 0.035, 8, false);
+    const glowTube = new THREE.TubeGeometry(curve, segments, 0.12, 8, false);
 
-    // Arrowhead direction from near-end of curve
     const nearEnd = curve.getPointAt(0.92);
     const dir = new THREE.Vector3().subVectors(end, nearEnd).normalize();
-    const cone = new THREE.ConeGeometry(0.1, 0.25, 8);
+    const cone = new THREE.ConeGeometry(0.12, 0.3, 8);
     const q = new THREE.Quaternion();
     q.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir);
     const euler = new THREE.Euler().setFromQuaternion(q);
 
-    return { tubeGeometry: tube, arrowGeometry: cone, arrowRotation: euler, dotPositions: dots };
+    return { tubeGeometry: tube, glowTubeGeometry: glowTube, arrowGeometry: cone, arrowRotation: euler, dotPositions: dots };
   }, [from, to, waypoints]);
 
   return (
     <group>
+      {/* Core line */}
       <mesh geometry={tubeGeometry}>
-        <meshBasicMaterial color={color} transparent opacity={0.85} />
+        <meshStandardMaterial
+          color={color}
+          emissive={emissive}
+          emissiveIntensity={0.8}
+          roughness={0.2}
+          metalness={0.3}
+          transparent
+          opacity={0.95}
+        />
       </mesh>
+      {/* Glow tube */}
+      <mesh ref={glowRef} geometry={glowTubeGeometry}>
+        <meshBasicMaterial color={color} transparent opacity={0.18} />
+      </mesh>
+      {/* Arrowhead */}
       <mesh position={to} rotation={arrowRotation} geometry={arrowGeometry}>
-        <meshBasicMaterial color={color} />
+        <meshStandardMaterial
+          color={color}
+          emissive={emissive}
+          emissiveIntensity={1}
+          roughness={0.2}
+        />
       </mesh>
-      {/* Waypoint dots */}
+      {/* Waypoint dots - glowing */}
       {dotPositions.map((pos, i) => (
-        <mesh key={i} position={pos}>
-          <sphereGeometry args={[0.06, 8, 8]} />
-          <meshBasicMaterial color={color} />
-        </mesh>
+        <group key={i}>
+          <mesh position={pos}>
+            <sphereGeometry args={[0.06, 8, 8]} />
+            <meshStandardMaterial color={color} emissive={emissive} emissiveIntensity={1.2} />
+          </mesh>
+          <mesh position={pos}>
+            <sphereGeometry args={[0.12, 8, 8]} />
+            <meshBasicMaterial color={color} transparent opacity={0.2} />
+          </mesh>
+        </group>
       ))}
     </group>
   );
