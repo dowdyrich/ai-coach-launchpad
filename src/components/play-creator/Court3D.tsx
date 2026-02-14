@@ -68,12 +68,17 @@ function CourtFloor({ mode }: { mode: CourtMode }) {
 
   return (
     <group>
-      {/* Main court surface */}
+      {/* Main court surface – glossy hardwood */}
       <mesh rotation={[-Math.PI / 2, 0, 0]} position={[floorX, 0, 0]} receiveShadow>
         <planeGeometry args={[floorW, COURT_WIDTH + 1]} />
-        <meshStandardMaterial color="hsl(25, 53%, 62%)" />
+        <meshStandardMaterial
+          color="#b5873a"
+          roughness={0.25}
+          metalness={0.15}
+          envMapIntensity={0.6}
+        />
       </mesh>
-      {/* Paint/key areas - slightly different color */}
+      {/* Paint/key areas */}
       {(mode === "full" ? [1, -1] : [1]).map(side => {
         const baseX = side * HALF_L;
         const dir = -side;
@@ -81,10 +86,15 @@ function CourtFloor({ mode }: { mode: CourtMode }) {
         return (
           <mesh key={side} rotation={[-Math.PI / 2, 0, 0]} position={[paintX, 0.001, 0]}>
             <planeGeometry args={[KEY_LENGTH, KEY_WIDTH]} />
-            <meshStandardMaterial color="hsl(25, 45%, 55%)" />
+            <meshStandardMaterial color="#8b3a3a" roughness={0.3} metalness={0.1} />
           </mesh>
         );
       })}
+      {/* Arena floor surround (dark) */}
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[floorX, -0.005, 0]}>
+        <planeGeometry args={[floorW + 8, COURT_WIDTH + 8]} />
+        <meshStandardMaterial color="#1a1a2e" roughness={0.9} />
+      </mesh>
       <CourtLines mode={mode} />
     </group>
   );
@@ -231,7 +241,13 @@ function CourtLines({ mode }: { mode: CourtMode }) {
     <group>
       {lines.map(({ geometry, key }) => (
         <lineSegments key={key} geometry={geometry}>
-          <lineBasicMaterial color="white" linewidth={1} />
+          <lineBasicMaterial color="#ffffff" linewidth={2} />
+        </lineSegments>
+      ))}
+      {/* Subtle court line glow */}
+      {lines.map(({ geometry, key }) => (
+        <lineSegments key={`glow-${key}`} geometry={geometry}>
+          <lineBasicMaterial color="#ffffff" linewidth={4} transparent opacity={0.15} />
         </lineSegments>
       ))}
     </group>
@@ -245,20 +261,25 @@ function BackboardAndHoop({ side }: { side: 1 | -1 }) {
 
   return (
     <group>
-      {/* Backboard */}
+      {/* Backboard – glass look */}
       <mesh position={[bbX, 2.8, 0]}>
         <boxGeometry args={[0.05, 1.1, BACKBOARD_WIDTH]} />
-        <meshStandardMaterial color="white" transparent opacity={0.7} />
+        <meshStandardMaterial color="#c0d8ff" transparent opacity={0.55} roughness={0.05} metalness={0.8} />
       </mesh>
-      {/* Rim */}
+      {/* Backboard edge glow */}
+      <mesh position={[bbX, 2.8, 0]}>
+        <boxGeometry args={[0.06, 1.12, BACKBOARD_WIDTH + 0.02]} />
+        <meshBasicMaterial color="#4488ff" transparent opacity={0.1} />
+      </mesh>
+      {/* Rim – metallic orange */}
       <mesh position={[basketX, 2.4, 0]} rotation={[Math.PI / 2, 0, 0]}>
-        <torusGeometry args={[BASKET_RING_R, 0.02, 8, 24]} />
-        <meshStandardMaterial color="hsl(15, 90%, 50%)" />
+        <torusGeometry args={[BASKET_RING_R, 0.025, 8, 24]} />
+        <meshStandardMaterial color="#ff6600" emissive="#ff4400" emissiveIntensity={0.4} roughness={0.2} metalness={0.7} />
       </mesh>
       {/* Support pole */}
       <mesh position={[side * (HALF_L - 0.15), 1.4, 0]}>
-        <cylinderGeometry args={[0.05, 0.05, 2.8]} />
-        <meshStandardMaterial color="hsl(0, 0%, 40%)" />
+        <cylinderGeometry args={[0.06, 0.06, 2.8]} />
+        <meshStandardMaterial color="#333" roughness={0.3} metalness={0.6} />
       </mesh>
     </group>
   );
@@ -442,9 +463,38 @@ function AnimatedScene({
         maxDistance={35}
       />
 
-      <ambientLight intensity={0.5} />
-      <directionalLight position={[10, 15, 5]} intensity={1} castShadow shadow-mapSize-width={1024} shadow-mapSize-height={1024} />
-      <directionalLight position={[-5, 10, -5]} intensity={0.3} />
+      {/* Arena atmosphere */}
+      <color attach="background" args={["#0a0a12"]} />
+      <fog attach="fog" args={["#0a0a12", 25, 55]} />
+
+      {/* Dramatic arena lighting */}
+      <ambientLight intensity={0.25} color="#334" />
+      <directionalLight
+        position={[10, 20, 5]}
+        intensity={1.8}
+        castShadow
+        shadow-mapSize-width={2048}
+        shadow-mapSize-height={2048}
+        color="#ffe8d0"
+      />
+      <directionalLight position={[-8, 12, -5]} intensity={0.4} color="#b0c4ff" />
+
+      {/* Overhead spotlights */}
+      <spotLight position={[0, 20, 0]} angle={0.6} penumbra={0.5} intensity={2.5} color="#fff5e0" castShadow />
+      <spotLight position={[HALF_L * 0.8, 18, 0]} angle={0.4} penumbra={0.6} intensity={1.5} color="#ffd080" />
+      {courtMode === "full" && (
+        <spotLight position={[-HALF_L * 0.8, 18, 0]} angle={0.4} penumbra={0.6} intensity={1.5} color="#ffd080" />
+      )}
+
+      {/* Rim lights for depth */}
+      <pointLight position={[HALF_L, 1, HALF_W]} intensity={0.6} color="#4488ff" distance={12} />
+      <pointLight position={[HALF_L, 1, -HALF_W]} intensity={0.6} color="#4488ff" distance={12} />
+      {courtMode === "full" && (
+        <>
+          <pointLight position={[-HALF_L, 1, HALF_W]} intensity={0.6} color="#ff4444" distance={12} />
+          <pointLight position={[-HALF_L, 1, -HALF_W]} intensity={0.6} color="#ff4444" distance={12} />
+        </>
+      )}
 
       {/* Clickable floor */}
       <mesh
