@@ -428,8 +428,8 @@ function AnimatedScene({
   const phaseRef = useRef<"preview" | "moving">("preview");
   const previewTimerRef = useRef(0);
   /** Whether to show action lines during animation (only during preview phase) */
-  const showLinesRef = useRef(false);
-  const PREVIEW_DURATION = 1.0; // seconds to show lines before animating
+  const [showLines, setShowLines] = useState(false);
+  const PREVIEW_DURATION = 2.0; // seconds to show lines before animating
 
   useEffect(() => {
     if (isAnimating && !wasAnimating.current) {
@@ -438,7 +438,7 @@ function AnimatedScene({
       visibleStepRef.current = 0;
       phaseRef.current = "preview";
       previewTimerRef.current = 0;
-      showLinesRef.current = true;
+      setShowLines(true);
     }
     if (!isAnimating) {
       animationEndedRef.current = false;
@@ -455,7 +455,7 @@ function AnimatedScene({
     if (phaseRef.current === "preview") {
       previewTimerRef.current += delta;
       visibleStepRef.current = currentStep;
-      showLinesRef.current = true;
+      setShowLines(true);
 
       // Position players at start of this step (no movement yet)
       const positions = getAnimatedPlayerPositions(players, actions, currentStep, totalSteps, courtMode, speed);
@@ -466,13 +466,13 @@ function AnimatedScene({
 
       if (previewTimerRef.current >= PREVIEW_DURATION) {
         phaseRef.current = "moving";
-        showLinesRef.current = false;
+        setShowLines(false);
       }
       return;
     }
 
     // Moving phase: animate players, hide action lines
-    showLinesRef.current = false;
+    setShowLines(false);
     progressRef.current += delta * speed;
 
     if (progressRef.current >= totalSteps) {
@@ -494,7 +494,7 @@ function AnimatedScene({
       visibleStepRef.current = newStep;
       phaseRef.current = "preview";
       previewTimerRef.current = 0;
-      showLinesRef.current = true;
+      setShowLines(true);
       return;
     }
 
@@ -517,7 +517,7 @@ function AnimatedScene({
 
   const visibleActions = !isAnimating
     ? actions.filter((a) => a.stepIndex === editingStep)
-    : showLinesRef.current
+    : showLines
       ? actions.filter((a) => a.stepIndex === visibleStepRef.current)
       : [];
 
