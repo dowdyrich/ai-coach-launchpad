@@ -1,9 +1,11 @@
 import { Canvas, useFrame } from "@react-three/fiber";
 import { OrbitControls, PerspectiveCamera } from "@react-three/drei";
-import { useMemo, useRef, useEffect, useState, useCallback } from "react";
+import { useMemo, useRef, useEffect, useState } from "react";
 import * as THREE from "three";
 import { PlayerFigure } from "./PlayerFigure";
 import { ActionLine3D } from "./ActionLine3D";
+
+export type CourtMode = "full" | "half";
 
 interface CourtPlayer {
   id: string;
@@ -33,102 +35,225 @@ interface Court3DProps {
   isAnimating?: boolean;
   onAnimationEnd?: () => void;
   animationSpeed?: number;
+  courtMode?: CourtMode;
 }
 
-function CourtFloor() {
+// ── NBA Official Dimensions (in meters) ─────────────────────────
+const FT = 0.3048;
+const COURT_LENGTH = 94 * FT;    // 28.6512m
+const COURT_WIDTH = 50 * FT;     // 15.24m
+const HALF_L = COURT_LENGTH / 2; // 14.3256m
+const HALF_W = COURT_WIDTH / 2;  // 7.62m
+
+const BASKET_FROM_BASELINE = 5.25 * FT;   // 1.6002m (center of basket)
+const KEY_WIDTH = 16 * FT;                  // 4.8768m (outside)
+const KEY_HALF_W = KEY_WIDTH / 2;           // 2.4384m
+const KEY_LENGTH = 19 * FT;                 // 5.7912m from baseline
+const FT_CIRCLE_R = 6 * FT;                // 1.8288m free-throw circle
+const THREE_PT_R = 23.75 * FT;             // 7.2390m
+const THREE_PT_CORNER_DIST = 3 * FT;       // 0.9144m from sideline
+const CENTER_CIRCLE_R = 6 * FT;            // 1.8288m
+const RESTRICTED_R = 4 * FT;               // 1.2192m
+const BASKET_RING_R = 0.2286;              // 9 inches = 0.2286m
+const BACKBOARD_WIDTH = 6 * FT;            // 1.8288m
+const BACKBOARD_FROM_BASELINE = 4 * FT;    // 1.2192m
+
+// ── Court Floor ──────────────────────────────────────────────────
+function CourtFloor({ mode }: { mode: CourtMode }) {
+  const floorW = mode === "full" ? COURT_LENGTH + 1 : HALF_L + 1;
+  const floorX = mode === "full" ? 0 : HALF_L / 2;
+
   return (
     <group>
-      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0, 0]} receiveShadow>
-        <planeGeometry args={[28.65, 15.24]} />
+      {/* Main court surface */}
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[floorX, 0, 0]} receiveShadow>
+        <planeGeometry args={[floorW, COURT_WIDTH + 1]} />
         <meshStandardMaterial color="hsl(25, 53%, 62%)" />
       </mesh>
-      <CourtLines />
+      {/* Paint/key areas - slightly different color */}
+      {(mode === "full" ? [1, -1] : [1]).map(side => {
+        const baseX = side * HALF_L;
+        const dir = -side;
+        const paintX = baseX + dir * KEY_LENGTH / 2;
+        return (
+          <mesh key={side} rotation={[-Math.PI / 2, 0, 0]} position={[paintX, 0.001, 0]}>
+            <planeGeometry args={[KEY_LENGTH, KEY_WIDTH]} />
+            <meshStandardMaterial color="hsl(25, 45%, 55%)" />
+          </mesh>
+        );
+      })}
+      <CourtLines mode={mode} />
     </group>
   );
 }
 
-function CourtLines() {
+// ── Accurate NBA Court Lines ─────────────────────────────────────
+function CourtLines({ mode }: { mode: CourtMode }) {
   const lines = useMemo(() => {
-    const geometries: THREE.BufferGeometry[] = [];
+    const geos: THREE.BufferGeometry[] = [];
+    const Y = 0.01;
+    const sides: (1 | -1)[] = mode === "full" ? [-1, 1] : [1];
+    const minX = mode === "full" ? -HALF_L : 0;
 
-    const boundary = new THREE.BufferGeometry().setFromPoints([
-      new THREE.Vector3(-14, 0.01, -7.5),
-      new THREE.Vector3(14, 0.01, -7.5),
-      new THREE.Vector3(14, 0.01, 7.5),
-      new THREE.Vector3(-14, 0.01, 7.5),
-      new THREE.Vector3(-14, 0.01, -7.5),
-    ]);
-    geometries.push(boundary);
+    const pts = (...coords: [number, number][]) =>
+      coords.map(([x, z]) => new THREE.Vector3(x, Y, z));
 
-    const half = new THREE.BufferGeometry().setFromPoints([
-      new THREE.Vector3(0, 0.01, -7.5),
-      new THREE.Vector3(0, 0.01, 7.5),
-    ]);
-    geometries.push(half);
+    const addLine = (points: THREE.Vector3[]) =>
+      geos.push(new THREE.BufferGeometry().setFromPoints(points));
 
-    const circlePoints: THREE.Vector3[] = [];
-    for (let i = 0; i <= 64; i++) {
-      const angle = (i / 64) * Math.PI * 2;
-      circlePoints.push(new THREE.Vector3(Math.cos(angle) * 1.8, 0.01, Math.sin(angle) * 1.8));
-    }
-    geometries.push(new THREE.BufferGeometry().setFromPoints(circlePoints));
-
-    for (const side of [-1, 1]) {
-      const arcPoints: THREE.Vector3[] = [];
-      for (let i = 0; i <= 32; i++) {
-        const angle = -Math.PI / 2.5 + (i / 32) * (Math.PI / 1.25);
-        arcPoints.push(new THREE.Vector3(side * 12.5 + Math.cos(angle) * side * -5.5, 0.01, Math.sin(angle) * 5.5));
+    const addArc = (cx: number, cz: number, r: number, startA: number, endA: number, segs = 48) => {
+      const p: THREE.Vector3[] = [];
+      for (let i = 0; i <= segs; i++) {
+        const a = startA + (i / segs) * (endA - startA);
+        p.push(new THREE.Vector3(cx + Math.cos(a) * r, Y, cz + Math.sin(a) * r));
       }
-      geometries.push(new THREE.BufferGeometry().setFromPoints(arcPoints));
+      addLine(p);
+    };
+
+    // ── Boundary ──
+    addLine(pts(
+      [minX, -HALF_W], [HALF_L, -HALF_W],
+      [HALF_L, HALF_W], [minX, HALF_W], [minX, -HALF_W]
+    ));
+
+    // ── Half-court line ──
+    if (mode === "full") {
+      addLine(pts([0, -HALF_W], [0, HALF_W]));
     }
 
-    for (const side of [-1, 1]) {
-      const keyX = side * 14;
-      const keyW = side * -5.8;
-      const keyPoints = [
-        new THREE.Vector3(keyX, 0.01, -2.44),
-        new THREE.Vector3(keyX + keyW, 0.01, -2.44),
-        new THREE.Vector3(keyX + keyW, 0.01, 2.44),
-        new THREE.Vector3(keyX, 0.01, 2.44),
-      ];
-      geometries.push(new THREE.BufferGeometry().setFromPoints(keyPoints));
+    // ── Center circle ──
+    if (mode === "full") {
+      addArc(0, 0, CENTER_CIRCLE_R, 0, Math.PI * 2, 64);
+    } else {
+      // Half circle on the half-court line side
+      addArc(0, 0, CENTER_CIRCLE_R, -Math.PI / 2, Math.PI / 2, 32);
     }
 
-    for (const side of [-1, 1]) {
-      const basketPts: THREE.Vector3[] = [];
-      for (let i = 0; i <= 32; i++) {
-        const angle = (i / 32) * Math.PI * 2;
-        basketPts.push(new THREE.Vector3(side * 13.1 + Math.cos(angle) * 0.23, 0.01, Math.sin(angle) * 0.23));
+    // ── Per-side elements ──
+    for (const side of sides) {
+      const baseX = side * HALF_L;
+      const dir = -side; // direction toward center
+      const basketX = baseX + dir * BASKET_FROM_BASELINE;
+
+      // Key / Paint outline
+      const keyEndX = baseX + dir * KEY_LENGTH;
+      addLine(pts(
+        [baseX, -KEY_HALF_W], [keyEndX, -KEY_HALF_W],
+        [keyEndX, KEY_HALF_W], [baseX, KEY_HALF_W]
+      ));
+
+      // Free-throw line (connecting top of key)
+      addLine(pts([keyEndX, -KEY_HALF_W], [keyEndX, KEY_HALF_W]));
+
+      // Free-throw circle - solid half (toward basket)
+      const ftSolidStart = side === 1 ? Math.PI / 2 : -Math.PI / 2;
+      const ftSolidEnd = side === 1 ? (3 * Math.PI) / 2 : Math.PI / 2;
+      addArc(keyEndX, 0, FT_CIRCLE_R, ftSolidStart, ftSolidEnd, 32);
+
+      // Free-throw circle - dashed half (away from basket)
+      const ftDashStart = side === 1 ? -Math.PI / 2 : Math.PI / 2;
+      const ftDashEnd = side === 1 ? Math.PI / 2 : (3 * Math.PI) / 2;
+      const dashCount = 6;
+      for (let d = 0; d < dashCount; d++) {
+        if (d % 2 === 0) {
+          const dStart = ftDashStart + (d / dashCount) * (ftDashEnd - ftDashStart);
+          const dEnd = ftDashStart + ((d + 1) / dashCount) * (ftDashEnd - ftDashStart);
+          addArc(keyEndX, 0, FT_CIRCLE_R, dStart, dEnd, 8);
+        }
       }
-      geometries.push(new THREE.BufferGeometry().setFromPoints(basketPts));
+
+      // Three-point line
+      const tpCornerZ = HALF_W - THREE_PT_CORNER_DIST;
+      const aCorner = Math.asin(Math.min(tpCornerZ / THREE_PT_R, 1));
+
+      // Corner straight portions (from baseline to arc start)
+      const cornerArcX = basketX + dir * Math.cos(aCorner) * THREE_PT_R * (-dir);
+      // For side=1: corner x = basketX - cos(aCorner)*R (toward center)
+      // For side=-1: corner x = basketX + cos(aCorner)*R (toward center)
+      const cornerXStart = baseX;
+      // Actually compute where arc meets the corner z line
+      // Point on arc at corner: (basketX + R*cos(a), R*sin(a)) where sin(a) = cornerZ/R
+      // For side=1, the arc points TOWARD center, so cos(a) is positive means toward baseline
+      // We want the arc point x closer to baseline
+      const arcCornerX_top = basketX + Math.cos(aCorner) * THREE_PT_R;
+      const arcCornerX_bot = basketX + Math.cos(-aCorner) * THREE_PT_R;
+
+      // Corner lines run from baseline straight toward center at ±tpCornerZ
+      // Top corner (z = +tpCornerZ)
+      if (side === 1) {
+        addLine(pts([baseX, tpCornerZ], [basketX + Math.cos(aCorner) * THREE_PT_R, tpCornerZ]));
+        addLine(pts([baseX, -tpCornerZ], [basketX + Math.cos(aCorner) * THREE_PT_R, -tpCornerZ]));
+      } else {
+        addLine(pts([baseX, tpCornerZ], [basketX - Math.cos(aCorner) * THREE_PT_R, tpCornerZ]));
+        addLine(pts([baseX, -tpCornerZ], [basketX - Math.cos(aCorner) * THREE_PT_R, -tpCornerZ]));
+      }
+
+      // Three-point arc
+      if (side === 1) {
+        // Arc from bottom corner to top corner, sweeping through π (toward center)
+        addArc(basketX, 0, THREE_PT_R, aCorner, 2 * Math.PI - aCorner, 64);
+      } else {
+        // Arc sweeping through 0 (toward center for left side)
+        addArc(basketX, 0, THREE_PT_R, Math.PI + aCorner, -(Math.PI + aCorner) + 2 * Math.PI, 64);
+      }
+
+      // Restricted area arc
+      if (side === 1) {
+        addArc(basketX, 0, RESTRICTED_R, Math.PI / 2, (3 * Math.PI) / 2, 24);
+        // Straight lines connecting to baseline
+        addLine(pts([basketX, -RESTRICTED_R], [baseX, -RESTRICTED_R]));
+        addLine(pts([basketX, RESTRICTED_R], [baseX, RESTRICTED_R]));
+      } else {
+        addArc(basketX, 0, RESTRICTED_R, -Math.PI / 2, Math.PI / 2, 24);
+        addLine(pts([basketX, -RESTRICTED_R], [baseX, -RESTRICTED_R]));
+        addLine(pts([basketX, RESTRICTED_R], [baseX, RESTRICTED_R]));
+      }
+
+      // Basket ring (on the floor as reference)
+      addArc(basketX, 0, BASKET_RING_R, 0, Math.PI * 2, 24);
+
+      // Lane hash marks (4 marks on each side of the key)
+      const hashFt = [7, 8, 11, 14]; // feet from baseline
+      for (const ft of hashFt) {
+        const hx = baseX + dir * ft * FT;
+        addLine(pts([hx, KEY_HALF_W], [hx, KEY_HALF_W + 0.2]));
+        addLine(pts([hx, -KEY_HALF_W], [hx, -KEY_HALF_W - 0.2]));
+      }
     }
 
-    return geometries.map((g, i) => ({ geometry: g, key: i }));
-  }, []);
+    return geos.map((g, i) => ({ geometry: g, key: i }));
+  }, [mode]);
 
   return (
     <group>
       {lines.map(({ geometry, key }) => (
         <lineSegments key={key} geometry={geometry}>
-          <lineBasicMaterial color="white" />
+          <lineBasicMaterial color="white" linewidth={1} />
         </lineSegments>
       ))}
     </group>
   );
 }
 
+// ── Backboard & Hoop (3D) ────────────────────────────────────────
 function BackboardAndHoop({ side }: { side: 1 | -1 }) {
+  const bbX = side * (HALF_L - BACKBOARD_FROM_BASELINE);
+  const basketX = side * (HALF_L - BASKET_FROM_BASELINE);
+
   return (
-    <group position={[side * 13.4, 0, 0]}>
-      <mesh position={[0, 2.8, 0]}>
-        <boxGeometry args={[0.05, 1.1, 1.8]} />
+    <group>
+      {/* Backboard */}
+      <mesh position={[bbX, 2.8, 0]}>
+        <boxGeometry args={[0.05, 1.1, BACKBOARD_WIDTH]} />
         <meshStandardMaterial color="white" transparent opacity={0.7} />
       </mesh>
-      <mesh position={[side * -0.4, 2.4, 0]} rotation={[Math.PI / 2, 0, 0]}>
-        <torusGeometry args={[0.23, 0.02, 8, 24]} />
+      {/* Rim */}
+      <mesh position={[basketX, 2.4, 0]} rotation={[Math.PI / 2, 0, 0]}>
+        <torusGeometry args={[BASKET_RING_R, 0.02, 8, 24]} />
         <meshStandardMaterial color="hsl(15, 90%, 50%)" />
       </mesh>
-      <mesh position={[side * 0.15, 1.4, 0]}>
+      {/* Support pole */}
+      <mesh position={[side * (HALF_L - 0.15), 1.4, 0]}>
         <cylinderGeometry args={[0.05, 0.05, 2.8]} />
         <meshStandardMaterial color="hsl(0, 0%, 40%)" />
       </mesh>
@@ -136,19 +261,30 @@ function BackboardAndHoop({ side }: { side: 1 | -1 }) {
   );
 }
 
-// Convert 2D canvas coords (0-800, 0-500) to 3D court coords
-const toCourtPos = (x: number, y: number): [number, number, number] => {
-  return [(x / 800) * 28.65 - 14.325, 0, (y / 500) * 15.24 - 7.62];
-};
+// ── Coordinate conversion ────────────────────────────────────────
+// 2D canvas (0-800, 0-500) → 3D court coords
+function toCourtPos(x: number, y: number, mode: CourtMode): [number, number, number] {
+  if (mode === "half") {
+    // Map to right half: x: [0, HALF_L], z: [-HALF_W, HALF_W]
+    return [(x / 800) * HALF_L, 0, (y / 500) * COURT_WIDTH - HALF_W];
+  }
+  return [(x / 800) * COURT_LENGTH - HALF_L, 0, (y / 500) * COURT_WIDTH - HALF_W];
+}
 
-/**
- * Compute the animated 3D position for each player given the current animation progress.
- */
+function fromCourtPos(px: number, pz: number, mode: CourtMode): [number, number] {
+  if (mode === "half") {
+    return [(px / HALF_L) * 800, ((pz + HALF_W) / COURT_WIDTH) * 500];
+  }
+  return [((px + HALF_L) / COURT_LENGTH) * 800, ((pz + HALF_W) / COURT_WIDTH) * 500];
+}
+
+// ── Animation helper ─────────────────────────────────────────────
 function getAnimatedPlayerPositions(
   players: CourtPlayer[],
   actions: CourtAction[],
   progress: number,
-  totalSteps: number
+  totalSteps: number,
+  mode: CourtMode
 ): Map<string, THREE.Vector3> {
   const TOLERANCE = 50;
   const positions = new Map<string, THREE.Vector3>();
@@ -173,7 +309,6 @@ function getAnimatedPlayerPositions(
           cx = act.toX;
           cy = act.toY;
         } else {
-          // Interpolate along waypoints if present
           const allPoints = [
             { x: act.fromX, y: act.fromY },
             ...(act.waypoints || []),
@@ -189,16 +324,14 @@ function getAnimatedPlayerPositions(
       }
     }
 
-    const [px, , pz] = toCourtPos(cx, cy);
+    const [px, , pz] = toCourtPos(cx, cy, mode);
     positions.set(player.id, new THREE.Vector3(px, 0, pz));
   }
 
   return positions;
 }
 
-/**
- * Inner scene component that runs the animation loop inside useFrame.
- */
+// ── Animated Scene ───────────────────────────────────────────────
 function AnimatedScene({
   players,
   actions,
@@ -208,6 +341,7 @@ function AnimatedScene({
   isAnimating,
   onAnimationEnd,
   speed,
+  courtMode,
 }: {
   players: CourtPlayer[];
   actions: CourtAction[];
@@ -217,6 +351,7 @@ function AnimatedScene({
   isAnimating: boolean;
   onAnimationEnd?: () => void;
   speed: number;
+  courtMode: CourtMode;
 }) {
   const totalSteps = actions.length > 0 ? Math.max(...actions.map((a) => a.stepIndex)) + 1 : 1;
   const progressRef = useRef(0);
@@ -225,7 +360,6 @@ function AnimatedScene({
   const animationEndedRef = useRef(false);
   const visibleStepRef = useRef(-1);
 
-  // Reset progress when animation starts
   useEffect(() => {
     if (isAnimating && !wasAnimating.current) {
       progressRef.current = 0;
@@ -246,86 +380,83 @@ function AnimatedScene({
     if (progressRef.current >= totalSteps) {
       progressRef.current = totalSteps;
       visibleStepRef.current = totalSteps;
-      // Update final positions
-      const finalPositions = getAnimatedPlayerPositions(players, actions, totalSteps, totalSteps);
+      const finalPositions = getAnimatedPlayerPositions(players, actions, totalSteps, totalSteps, courtMode);
       finalPositions.forEach((pos, id) => {
         const group = playerRefs.current.get(id);
         if (group) group.position.copy(pos);
       });
-      // Guard: only fire onAnimationEnd once
       animationEndedRef.current = true;
       setTimeout(() => onAnimationEnd?.(), 800);
       return;
     }
 
-    // Update visible step for action lines
     const currentStep = Math.floor(progressRef.current);
     visibleStepRef.current = currentStep;
 
-    // Compute and apply animated positions directly to Three.js objects
-    const positions = getAnimatedPlayerPositions(players, actions, progressRef.current, totalSteps);
+    const positions = getAnimatedPlayerPositions(players, actions, progressRef.current, totalSteps, courtMode);
     positions.forEach((pos, id) => {
       const group = playerRefs.current.get(id);
-      if (group) {
-        group.position.lerp(pos, 0.15);
-      }
+      if (group) group.position.lerp(pos, 0.15);
     });
   });
 
   const handlePointerDown = (e: any) => {
     if (e.object?.userData?.isFloor && onCourtClick) {
       const point = e.point;
-      const x = ((point.x + 14.325) / 28.65) * 800;
-      const y = ((point.z + 7.62) / 15.24) * 500;
+      const [x, y] = fromCourtPos(point.x, point.z, courtMode);
       onCourtClick(x, y);
     }
   };
 
-  // Show all actions when not animating, or progressively during animation
   const visibleActions = !isAnimating
     ? actions
     : actions.filter((a) => a.stepIndex <= visibleStepRef.current);
 
+  // Camera position based on mode
+  const camPos: [number, number, number] = courtMode === "half"
+    ? [HALF_L / 2, 14, 14]
+    : [0, 18, 16];
+
+  const floorW = courtMode === "full" ? COURT_LENGTH + 2 : HALF_L + 2;
+  const floorX = courtMode === "full" ? 0 : HALF_L / 2;
+
   return (
     <>
-      <PerspectiveCamera makeDefault position={[0, 18, 16]} fov={50} />
+      <PerspectiveCamera makeDefault position={camPos} fov={50} />
       <OrbitControls
         enablePan
         enableZoom
         enableRotate
+        target={courtMode === "half" ? [HALF_L / 2, 0, 0] : [0, 0, 0]}
         maxPolarAngle={Math.PI / 2.2}
-        minDistance={8}
+        minDistance={6}
         maxDistance={35}
       />
 
       <ambientLight intensity={0.5} />
-      <directionalLight
-        position={[10, 15, 5]}
-        intensity={1}
-        castShadow
-        shadow-mapSize-width={1024}
-        shadow-mapSize-height={1024}
-      />
+      <directionalLight position={[10, 15, 5]} intensity={1} castShadow shadow-mapSize-width={1024} shadow-mapSize-height={1024} />
       <directionalLight position={[-5, 10, -5]} intensity={0.3} />
 
       {/* Clickable floor */}
       <mesh
         rotation={[-Math.PI / 2, 0, 0]}
-        position={[0, -0.01, 0]}
+        position={[floorX, -0.01, 0]}
         onPointerDown={handlePointerDown}
         userData={{ isFloor: true }}
       >
-        <planeGeometry args={[30, 17]} />
+        <planeGeometry args={[floorW, COURT_WIDTH + 2]} />
         <meshStandardMaterial transparent opacity={0} />
       </mesh>
 
-      <CourtFloor />
+      <CourtFloor mode={courtMode} />
+
+      {/* Backboards */}
       <BackboardAndHoop side={1} />
-      <BackboardAndHoop side={-1} />
+      {courtMode === "full" && <BackboardAndHoop side={-1} />}
 
       {/* Players */}
       {players.map((p) => {
-        const [px, , pz] = toCourtPos(p.x, p.y);
+        const [px, , pz] = toCourtPos(p.x, p.y, courtMode);
         return (
           <PlayerFigure
             key={p.id}
@@ -345,10 +476,10 @@ function AnimatedScene({
       {/* Action lines */}
       <group>
         {visibleActions.map((a, i) => {
-          const [fx, , fz] = toCourtPos(a.fromX, a.fromY);
-          const [tx, , tz] = toCourtPos(a.toX, a.toY);
+          const [fx, , fz] = toCourtPos(a.fromX, a.fromY, courtMode);
+          const [tx, , tz] = toCourtPos(a.toX, a.toY, courtMode);
           const wp = a.waypoints?.map(w => {
-            const [wx, , wz] = toCourtPos(w.x, w.y);
+            const [wx, , wz] = toCourtPos(w.x, w.y, courtMode);
             return [wx, 0.5, wz] as [number, number, number];
           });
           return (
@@ -366,6 +497,7 @@ function AnimatedScene({
   );
 }
 
+// ── Main Export ───────────────────────────────────────────────────
 export function Court3D({
   players,
   actions,
@@ -375,6 +507,7 @@ export function Court3D({
   isAnimating,
   onAnimationEnd,
   animationSpeed = 0.5,
+  courtMode = "full",
 }: Court3DProps) {
   const [contextLost, setContextLost] = useState(false);
   const [canvasKey, setCanvasKey] = useState(0);
@@ -417,6 +550,7 @@ export function Court3D({
           isAnimating={!!isAnimating}
           onAnimationEnd={onAnimationEnd}
           speed={animationSpeed}
+          courtMode={courtMode}
         />
       </Canvas>
     </div>

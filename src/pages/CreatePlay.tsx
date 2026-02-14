@@ -12,7 +12,7 @@ import {
   Shield, Swords, UserPlus, X, Info, Check
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { Court3D } from "@/components/play-creator/Court3D";
+import { Court3D, CourtMode } from "@/components/play-creator/Court3D";
 import { VoiceOverlay, VoiceOverlayEntry } from "@/components/play-creator/VoiceOverlay";
 import { toast } from "sonner";
 
@@ -56,6 +56,7 @@ export default function CreatePlay() {
   const [saving, setSaving] = useState(false);
   const [drawingWaypoints, setDrawingWaypoints] = useState<{ x: number; y: number }[]>([]);
   const [drawPathType, setDrawPathType] = useState<"move" | "dribble">("move");
+  const [courtMode, setCourtMode] = useState<CourtMode>("half");
   // Load play data if playId provided
   useEffect(() => {
     if (!playId) return;
@@ -602,11 +603,12 @@ export default function CreatePlay() {
                   onCourtClick={handleCourtClick}
                   isAnimating={isAnimating}
                   onAnimationEnd={() => setIsAnimating(false)}
+                  courtMode={courtMode}
                 />
               </CardContent>
             </Card>
 
-            {/* Court legend */}
+            {/* Court legend + mode toggle */}
             <div className="flex items-center gap-4 px-1 text-xs text-muted-foreground">
               <span className="flex items-center gap-1.5">
                 <div className="w-3 h-3 rounded-full bg-primary" /> Offense ({playerCount.home}/5)
@@ -614,7 +616,28 @@ export default function CreatePlay() {
               <span className="flex items-center gap-1.5">
                 <div className="w-3 h-3 rounded-full bg-destructive" /> Defense ({playerCount.away}/5)
               </span>
-              <span className="ml-auto">Drag to orbit · Scroll to zoom</span>
+              <div className="ml-auto flex items-center gap-1.5">
+                <div className="flex rounded-md border border-border overflow-hidden">
+                  <button
+                    className={cn(
+                      "px-2 py-1 text-xs font-medium transition-colors",
+                      courtMode === "half" ? "bg-primary text-primary-foreground" : "bg-muted hover:bg-muted/80"
+                    )}
+                    onClick={() => setCourtMode("half")}
+                  >
+                    Half Court
+                  </button>
+                  <button
+                    className={cn(
+                      "px-2 py-1 text-xs font-medium transition-colors",
+                      courtMode === "full" ? "bg-primary text-primary-foreground" : "bg-muted hover:bg-muted/80"
+                    )}
+                    onClick={() => setCourtMode("full")}
+                  >
+                    Full Court
+                  </button>
+                </div>
+              </div>
             </div>
           </div>
 
