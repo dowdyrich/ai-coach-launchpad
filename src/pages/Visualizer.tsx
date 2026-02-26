@@ -72,11 +72,22 @@ export default function Visualizer() {
     setPlayName(play?.name || "");
 
     // Convert play_steps rows to PlayStep format
-    const converted: PlayStep[] = data.map((row: any) => ({
-      step: row.step_number,
-      description: row.description || "",
-      players: row.players_data as Record<string, { x: number; z: number; label: string }>,
-    }));
+    // Stored data uses x(0-50), y(0-94) → court uses x(-25 to 25), z(-47 to 47)
+    const labels: Record<string, string> = { O1: "PG", O2: "SG", O3: "SF", O4: "PF", O5: "C" };
+    const converted: PlayStep[] = data.map((row: any) => {
+      const raw = row.players_data as Record<string, { x: number; y: number }>;
+      const players: Record<string, { x: number; z: number; label: string }> = {};
+      for (const key of ["O1", "O2", "O3", "O4", "O5"]) {
+        if (raw[key]) {
+          players[key] = {
+            x: raw[key].x - 25,
+            z: raw[key].y - 47,
+            label: labels[key] || key,
+          };
+        }
+      }
+      return { step: row.step_number, description: row.description || "", players };
+    });
 
     setSteps(converted);
     setLoadingSteps(false);
