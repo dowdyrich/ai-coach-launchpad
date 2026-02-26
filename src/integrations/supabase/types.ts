@@ -74,6 +74,41 @@ export type Database = {
           },
         ]
       }
+      play_steps: {
+        Row: {
+          created_at: string
+          description: string | null
+          id: string
+          play_id: string
+          players_data: Json
+          step_number: number
+        }
+        Insert: {
+          created_at?: string
+          description?: string | null
+          id?: string
+          play_id: string
+          players_data?: Json
+          step_number: number
+        }
+        Update: {
+          created_at?: string
+          description?: string | null
+          id?: string
+          play_id?: string
+          players_data?: Json
+          step_number?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "play_steps_play_id_fkey"
+            columns: ["play_id"]
+            isOneToOne: false
+            referencedRelation: "plays"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       play_templates: {
         Row: {
           actions_data: Json | null
