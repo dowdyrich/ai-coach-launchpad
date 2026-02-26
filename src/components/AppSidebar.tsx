@@ -1,7 +1,7 @@
 import { Link, useLocation } from "react-router-dom";
 import {
   LayoutDashboard, BookOpen, PlusCircle, Video,
-  PenTool, Brain, Users, Settings, LogOut, Trophy, CalendarDays
+  PenTool, Brain, Users, Settings, LogOut, Trophy, CalendarDays, Box
 } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { cn } from "@/lib/utils";
@@ -15,6 +15,7 @@ const navItems = [
   { href: "/coach-ai", icon: Brain, label: "AI Coach" },
   { href: "/team", icon: Users, label: "Team" },
   { href: "/schedule", icon: CalendarDays, label: "Schedule" },
+  { href: "/visualizer", icon: Box, label: "3D Visualizer" },
 ];
 
 export function AppSidebar() {
